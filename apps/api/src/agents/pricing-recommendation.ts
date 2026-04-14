@@ -104,8 +104,10 @@ export class PricingRecommendationAgent extends Agent<Env, RecommendationState> 
 
         if (!latestPrice) continue;
 
-        // Skip if already pending
-        if (this.state.pending.some((p) => p.cardId === row.card_id && p.grade === row.grade)) continue;
+        // Skip if already pending for same card+grade+company
+        if (this.state.pending.some((p) =>
+          p.cardId === row.card_id && p.grade === row.grade && p.gradingCompany === row.grading_company
+        )) continue;
 
         let action: Recommendation["action"] | null = null;
         let recommendedPrice = latestPrice;

@@ -55,12 +55,16 @@ export class CompetitorTrackerAgent extends Agent<Env, TrackerState> {
         const cardName = card.name as string;
         const ourPrice = card.fair_value as number;
 
-        // Check all external sources
+        const grade = card.grade as string;
+        const gradingCompany = card.grading_company as string;
+
+        // Check external sources — filter by grade+grading_company to avoid false gaps
         const externalPrices = await this.env.DB.prepare(
           `SELECT source, price_usd FROM price_observations
            WHERE card_id = ? AND source IN ('pricecharting', 'cardhedger', 'soldcomps')
+             AND COALESCE(grade, 'RAW') = ? AND COALESCE(grading_company, 'RAW') = ?
            ORDER BY sale_date DESC LIMIT 3`
-        ).bind(cardId).all();
+        ).bind(cardId, grade, gradingCompany).all();
 
         for (const ext of externalPrices.results) {
           const compPrice = ext.price_usd as number;

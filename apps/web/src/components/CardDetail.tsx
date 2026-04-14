@@ -24,8 +24,8 @@ export function CardDetail({ card, onBack }: CardDetailProps) {
   });
 
   const { data: history, isLoading: historyLoading } = useQuery({
-    queryKey: ["history", card.id, grade, historyDays],
-    queryFn: () => api.getHistory(card.id, historyDays, grade),
+    queryKey: ["history", card.id, grade, gradingCompany, historyDays],
+    queryFn: () => api.getHistory(card.id, historyDays, grade, gradingCompany),
   });
 
   const { data: sentiment } = useQuery({

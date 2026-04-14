@@ -1,12 +1,27 @@
 const API_BASE = "/v1";
 
+// API key injected at build time or read from localStorage for production.
+// In development (Vite proxy), auth is bypassed server-side.
+function getApiKey(): string | undefined {
+  if (typeof window !== "undefined") {
+    return localStorage.getItem("gamecards_api_key") || undefined;
+  }
+  return undefined;
+}
+
 async function fetchApi<T>(path: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(options?.headers as Record<string, string>),
+  };
+  const apiKey = getApiKey();
+  if (apiKey) {
+    headers["X-API-Key"] = apiKey;
+  }
+
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers,
-    },
+    headers,
   });
   if (!res.ok) {
     const error = await res.json().catch(() => ({ error: res.statusText }));
@@ -129,9 +144,10 @@ export const api = {
   },
 
   // History
-  getHistory: (cardId: string, days = 90, grade?: string) => {
+  getHistory: (cardId: string, days = 90, grade?: string, gradingCompany?: string) => {
     const params = new URLSearchParams({ days: String(days) });
     if (grade) params.set("grade", grade);
+    if (gradingCompany) params.set("grading_company", gradingCompany);
     return fetchApi<{ card_id: string; sales: SaleRecord[] }>(`/history/${cardId}?${params}`);
   },
 

@@ -52,7 +52,22 @@ api.route("/agents", agentRoutes);
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    // Route agent WebSocket/HTTP requests first
+    const url = new URL(request.url);
+
+    // Auth gate for /agents/* — same rules as /v1/*
+    if (url.pathname.startsWith("/agents/") && env.ENVIRONMENT !== "development") {
+      if (request.method !== "OPTIONS") {
+        const apiKey = request.headers.get("X-API-Key");
+        if (!apiKey || apiKey !== env.API_KEY) {
+          return new Response(JSON.stringify({ error: "Unauthorized" }), {
+            status: apiKey ? 403 : 401,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      }
+    }
+
+    // Route agent WebSocket/HTTP requests
     const agentResponse = await routeAgentRequest(request, env);
     if (agentResponse) return agentResponse;
 
