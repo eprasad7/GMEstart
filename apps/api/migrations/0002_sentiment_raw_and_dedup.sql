@@ -1,5 +1,5 @@
 -- Forward migration for existing D1 databases that already applied 0001.
--- Adds sentiment_raw table, rollup_date to sentiment_scores, and dedup indexes.
+-- Adds sentiment_raw table, migrates sentiment_scores (preserving data), and adds dedup indexes.
 
 -- ─── New: sentiment_raw table ───
 CREATE TABLE IF NOT EXISTS sentiment_raw (
@@ -16,14 +16,9 @@ CREATE INDEX IF NOT EXISTS idx_sentiment_raw_card ON sentiment_raw(card_id, obse
 CREATE INDEX IF NOT EXISTS idx_sentiment_raw_date ON sentiment_raw(observed_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sentiment_raw_dedup ON sentiment_raw(card_id, source, post_url) WHERE post_url IS NOT NULL;
 
--- ─── Alter: add rollup_date to sentiment_scores ───
--- SQLite doesn't support ADD COLUMN with UNIQUE constraints,
--- so we recreate the table if the old schema exists.
-
--- Drop old table and recreate with rollup_date
-DROP TABLE IF EXISTS sentiment_scores;
-
-CREATE TABLE sentiment_scores (
+-- ─── Migrate sentiment_scores: preserve existing data ───
+-- 1. Create new table with rollup_date column
+CREATE TABLE IF NOT EXISTS sentiment_scores_new (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   card_id TEXT NOT NULL REFERENCES card_catalog(id),
   source TEXT NOT NULL CHECK (source IN ('reddit','twitter')),
@@ -36,7 +31,18 @@ CREATE TABLE sentiment_scores (
   UNIQUE(card_id, source, period, rollup_date)
 );
 
-CREATE INDEX idx_sentiment_card ON sentiment_scores(card_id, rollup_date DESC);
+-- 2. Copy existing rows (use computed_at date as rollup_date for old data)
+INSERT OR IGNORE INTO sentiment_scores_new
+  (card_id, source, score, mention_count, period, top_posts, rollup_date, computed_at)
+SELECT card_id, source, score, mention_count, period, top_posts,
+       date(computed_at) as rollup_date, computed_at
+FROM sentiment_scores;
+
+-- 3. Swap tables
+DROP TABLE IF EXISTS sentiment_scores;
+ALTER TABLE sentiment_scores_new RENAME TO sentiment_scores;
+
+CREATE INDEX IF NOT EXISTS idx_sentiment_card ON sentiment_scores(card_id, rollup_date DESC);
 
 -- ─── New: dedup index on price_observations ───
 CREATE UNIQUE INDEX IF NOT EXISTS idx_price_obs_dedup ON price_observations(card_id, source, listing_url) WHERE listing_url IS NOT NULL;

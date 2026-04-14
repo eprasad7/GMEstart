@@ -205,6 +205,11 @@ function round2(n: number): number {
  * Writes to model_predictions that the serving layer reads.
  */
 export async function batchPredict(env: Env): Promise<number> {
+  // Prune predictions older than 7 days to prevent unbounded growth
+  await env.DB.prepare(
+    `DELETE FROM model_predictions WHERE predicted_at < datetime('now', '-7 days')`
+  ).bind().run();
+
   const featureRows = await env.DB.prepare(
     `SELECT card_id, grade, grading_company FROM feature_store`
   )

@@ -56,6 +56,18 @@ def load_models(model_dir: str, config: TrainingConfig) -> dict[float, lgb.Boost
     return models
 
 
+def load_conformal_correction(model_dir: str) -> float:
+    """Load conformal correction from model_meta.json (saved by train.py)."""
+    meta_path = Path(model_dir) / "model_meta.json"
+    if not meta_path.exists():
+        return 0.0
+    meta = json.loads(meta_path.read_text())
+    correction = meta.get("conformal_correction", 0.0)
+    if correction > 0:
+        logger.info(f"Loaded conformal correction: {correction:.4f}")
+    return float(correction)
+
+
 def score_all_cards(
     models: dict[float, lgb.Booster],
     features_df: pd.DataFrame,
@@ -173,7 +185,7 @@ def upload_predictions_to_r2(file_path: Path, config: TrainingConfig):
 @click.option("--model-dir", required=True, help="Directory with trained LightGBM models")
 @click.option("--features", required=True, help="CSV with card_id, grade, grading_company, + feature columns")
 @click.option("--output", default="batch_predictions.json", help="Output JSON file")
-@click.option("--conformal-correction", default=0.0, help="Conformal width correction (log-scale)")
+@click.option("--conformal-correction", default=None, type=float, help="Conformal width correction (log-scale). Auto-loaded from model_meta.json if omitted.")
 @click.option("--upload", is_flag=True, help="Upload to R2 after scoring")
 @click.option("--r2-endpoint", envvar="R2_ENDPOINT")
 @click.option("--r2-access-key", envvar="R2_ACCESS_KEY")
@@ -202,6 +214,10 @@ def cli(
     models = load_models(model_dir, config)
     if not models:
         raise click.ClickException("No models found")
+
+    # Auto-load conformal correction from model_meta.json if not specified
+    if conformal_correction is None:
+        conformal_correction = load_conformal_correction(model_dir)
 
     features_df = pd.read_csv(features)
     logger.info(f"Loaded {len(features_df)} feature rows from {features}")

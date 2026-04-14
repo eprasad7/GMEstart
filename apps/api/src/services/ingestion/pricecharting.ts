@@ -59,17 +59,13 @@ export async function ingestPriceCharting(env: Env): Promise<number> {
           grading_company: "PSA",
         });
       }
-      if (product["complete-price"]) {
+      // Use complete-price as the RAW baseline. If unavailable, fall back
+      // to loose-price. Never emit both — they would double-count RAW.
+      const rawPrice = product["complete-price"] || product["loose-price"];
+      if (rawPrice) {
         prices.push({
           grade: "RAW",
-          price: product["complete-price"] / 100,
-          grading_company: "RAW",
-        });
-      }
-      if (product["loose-price"]) {
-        prices.push({
-          grade: "RAW",
-          price: product["loose-price"] / 100,
+          price: rawPrice / 100,
           grading_company: "RAW",
         });
       }
@@ -86,7 +82,8 @@ export async function ingestPriceCharting(env: Env): Promise<number> {
             grading_company: p.grading_company,
             grade_numeric: p.grade === "RAW" ? null : parseFloat(p.grade),
             sale_type: "fixed",
-            listing_url: `https://www.pricecharting.com/game/${pcId}`,
+            // Include date in URL so daily snapshots aren't deduped by the unique index
+            listing_url: `https://www.pricecharting.com/game/${pcId}#${today}-${p.grade}`,
             seller_id: null,
             bid_count: null,
           },

@@ -100,7 +100,7 @@ async function computeCardFeatures(
   const gradeNumeric = grade === "RAW" ? null : parseFloat(grade);
 
   // Parallel queries for all feature components
-  const [salesStats, popData, sentimentData, priceHistory] = await Promise.all([
+  const [salesStats, popData, sentimentData, priceHistory, popGrowth, sentimentTrend] = await Promise.all([
     // Sales velocity at different windows
     env.DB.prepare(
       `SELECT
@@ -127,14 +127,16 @@ async function computeCardFeatures(
       .bind(cardId, gradingCompany, grade)
       .first(),
 
-    // Sentiment (from hourly rollup)
+    // Sentiment (from hourly rollup) — aggregate across sources
     env.DB.prepare(
-      `SELECT score, mention_count
+      `SELECT
+         AVG(score) as score,
+         SUM(mention_count) as mention_count
        FROM sentiment_scores
        WHERE card_id = ? AND period = '7d'
-       ORDER BY rollup_date DESC LIMIT 1`
+         AND rollup_date = (SELECT MAX(rollup_date) FROM sentiment_scores WHERE card_id = ? AND period = '7d')`
     )
-      .bind(cardId)
+      .bind(cardId, cardId)
       .first(),
 
     // Price history for volatility
@@ -147,6 +149,29 @@ async function computeCardFeatures(
     )
       .bind(cardId, gradingCompany, grade)
       .all(),
+
+    // Pop growth: compare current population to 90 days ago
+    env.DB.prepare(
+      `SELECT
+         (SELECT population FROM population_reports
+          WHERE card_id = ? AND grading_company = ? AND grade = ?
+          ORDER BY snapshot_date DESC LIMIT 1) as pop_now,
+         (SELECT population FROM population_reports
+          WHERE card_id = ? AND grading_company = ? AND grade = ?
+            AND snapshot_date <= date('now', '-90 days')
+          ORDER BY snapshot_date DESC LIMIT 1) as pop_90d_ago`
+    )
+      .bind(cardId, gradingCompany, grade, cardId, gradingCompany, grade)
+      .first(),
+
+    // Sentiment trend: compare 7d to 30d mention counts
+    env.DB.prepare(
+      `SELECT
+         (SELECT SUM(mention_count) FROM sentiment_scores WHERE card_id = ? AND period = '7d' ORDER BY rollup_date DESC LIMIT 1) as mentions_7d,
+         (SELECT SUM(mention_count) FROM sentiment_scores WHERE card_id = ? AND period = '30d' ORDER BY rollup_date DESC LIMIT 1) as mentions_30d`
+    )
+      .bind(cardId, cardId)
+      .first(),
   ]);
 
   // Compute derived features
@@ -196,7 +221,11 @@ async function computeCardFeatures(
     pop_higher: popHigher,
     pop_ratio: totalPop > 0 ? pop / totalPop : 0,
     is_pop_1: pop === 1,
-    pop_growth_rate_90d: 0, // Requires historical pop data comparison
+    pop_growth_rate_90d: (() => {
+      const popNow = (popGrowth?.pop_now as number) || 0;
+      const pop90d = (popGrowth?.pop_90d_ago as number) || 0;
+      return pop90d > 0 ? Math.round(((popNow - pop90d) / pop90d) * 100) / 100 : 0;
+    })(),
 
     sales_count_7d: sales7d,
     sales_count_30d: sales30d,
@@ -210,7 +239,13 @@ async function computeCardFeatures(
 
     social_sentiment_score: (sentimentData?.score as number) || 0,
     social_mention_count_7d: (sentimentData?.mention_count as number) || 0,
-    social_mention_trend: 0,
+    social_mention_trend: (() => {
+      const m7d = (sentimentTrend?.mentions_7d as number) || 0;
+      const m30d = (sentimentTrend?.mentions_30d as number) || 0;
+      // Normalize: 7d mentions / (30d mentions / 4.3) — >1 means spiking
+      const normalized30d = m30d / 4.3;
+      return normalized30d > 0 ? Math.round((m7d / normalized30d) * 100) / 100 : 0;
+    })(),
 
     month_sin: Math.round(Math.sin(monthRad) * 1000) / 1000,
     month_cos: Math.round(Math.cos(monthRad) * 1000) / 1000,

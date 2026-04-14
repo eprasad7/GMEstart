@@ -92,8 +92,9 @@ export interface Alert {
 
 export interface MarketIndex {
   pokemon_index: number;
+  pokemon_trend_30d: string;
   sports_index: number;
-  trend_30d: string;
+  sports_trend_30d: string;
   volatility: "low" | "moderate" | "high";
   updated_at: string;
 }

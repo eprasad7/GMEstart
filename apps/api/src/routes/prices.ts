@@ -58,8 +58,13 @@ priceRoutes.get("/:cardId", async (c) => {
     .bind(cardId)
     .first();
 
-  if (!prediction && !salesStats) {
-    return c.json({ error: "No pricing data available for this card" }, 404);
+  // Check if we actually have data — COUNT(*) always returns a row, so check the count
+  const hasSales = (salesStats?.sales_30d as number) > 0;
+  if (!prediction && !hasSales) {
+    if (!card) {
+      return c.json({ error: "Card not found" }, 404);
+    }
+    return c.json({ error: "No pricing data available for this card/grade combination" }, 404);
   }
 
   const ma7d = (trendData?.ma_7d as number) || 0;

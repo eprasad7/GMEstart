@@ -20,6 +20,9 @@ from .config import TrainingConfig
 
 logger = logging.getLogger(__name__)
 
+# Set by evaluate_models, read by save_models
+_last_conformal_correction: float = 0.0
+
 
 def load_training_data(data_path: str) -> pd.DataFrame:
     """
@@ -178,6 +181,10 @@ def evaluate_models(
     for k, v in conformal_metrics.items():
         mlflow.log_metric(k, v)
 
+    # Persist conformal correction so batch_score.py can load it automatically
+    global _last_conformal_correction
+    _last_conformal_correction = conformal_pricer.correction
+
     # Directional accuracy (did we predict the right trend?)
     if len(y_actual) > 1:
         actual_direction = np.sign(np.diff(y_actual))
@@ -226,12 +233,13 @@ def save_models(
         saved.append(path)
         logger.info(f"Saved model q={q} to {path}")
 
-    # Save feature names and config
+    # Save feature names, config, and conformal correction
     meta = {
         "version": "1.0.0",
         "quantiles": config.quantiles,
         "feature_columns": config.feature_columns,
         "model_files": {str(q): f"lightgbm_q{q:.2f}.txt" for q in config.quantiles},
+        "conformal_correction": _last_conformal_correction,
     }
     meta_path = output_path / "model_meta.json"
     meta_path.write_text(json.dumps(meta, indent=2))

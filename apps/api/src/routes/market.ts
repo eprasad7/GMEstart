@@ -10,23 +10,11 @@ marketRoutes.get("/index", async (c) => {
   if (cached) return c.json(cached);
 
   // Compute market indices by category
-  const pokemonIndex = await computeCategoryIndex(c.env.DB, "pokemon");
-  const sportsIndex = await computeCategoryIndex(c.env.DB, "sports_baseball");
-
-  // 30-day trend
-  const trend30d = await c.env.DB.prepare(
-    `SELECT
-       AVG(CASE WHEN sale_date >= date('now', '-7 days') THEN price_usd END) as recent,
-       AVG(CASE WHEN sale_date >= date('now', '-30 days') AND sale_date < date('now', '-7 days') THEN price_usd END) as older
-     FROM price_observations
-     WHERE sale_date >= date('now', '-30 days') AND is_anomaly = 0`
-  )
-    .bind()
-    .first();
-
-  const recent = (trend30d?.recent as number) || 0;
-  const older = (trend30d?.older as number) || 0;
-  const trendPct = older > 0 ? ((recent - older) / older) * 100 : 0;
+  // Compute per-category indexes and trends
+  const [pokemonData, sportsData] = await Promise.all([
+    computeCategoryData(c.env.DB, "pokemon"),
+    computeCategoryData(c.env.DB, "sports_baseball"),
+  ]);
 
   // Volatility (coefficient of variation of daily averages)
   const dailyPrices = await c.env.DB.prepare(
@@ -49,9 +37,10 @@ marketRoutes.get("/index", async (c) => {
   const volatility = cv > 0.15 ? "high" : cv > 0.08 ? "moderate" : "low";
 
   const response = {
-    pokemon_index: pokemonIndex,
-    sports_index: sportsIndex,
-    trend_30d: `${trendPct >= 0 ? "+" : ""}${trendPct.toFixed(1)}%`,
+    pokemon_index: pokemonData.index,
+    pokemon_trend_30d: pokemonData.trend,
+    sports_index: sportsData.index,
+    sports_trend_30d: sportsData.trend,
     volatility,
     updated_at: new Date().toISOString(),
   };
@@ -104,10 +93,21 @@ marketRoutes.get("/movers", async (c) => {
   return c.json({ direction, days, movers: results });
 });
 
-async function computeCategoryIndex(db: D1Database, category: string): Promise<number> {
+/**
+ * Compute per-category market index and 30-day trend.
+ * Index = weighted average of median card prices (normalized, not scaled by catalog size).
+ * Trend = 7-day average vs prior 23-day average.
+ */
+async function computeCategoryData(
+  db: D1Database,
+  category: string
+): Promise<{ index: number; trend: string }> {
   const result = await db
     .prepare(
-      `SELECT AVG(price_usd) * COUNT(DISTINCT card_id) as index_value
+      `SELECT
+         AVG(price_usd) as avg_price,
+         AVG(CASE WHEN sale_date >= date('now', '-7 days') THEN price_usd END) as recent,
+         AVG(CASE WHEN sale_date < date('now', '-7 days') THEN price_usd END) as older
        FROM price_observations
        WHERE card_id IN (SELECT id FROM card_catalog WHERE category = ?)
          AND sale_date >= date('now', '-30 days')
@@ -116,5 +116,11 @@ async function computeCategoryIndex(db: D1Database, category: string): Promise<n
     .bind(category)
     .first();
 
-  return Math.round((result?.index_value as number) || 0);
+  const index = Math.round(((result?.avg_price as number) || 0) * 100);
+  const recent = (result?.recent as number) || 0;
+  const older = (result?.older as number) || 0;
+  const trendPct = older > 0 ? ((recent - older) / older) * 100 : 0;
+  const trend = `${trendPct >= 0 ? "+" : ""}${trendPct.toFixed(1)}%`;
+
+  return { index, trend };
 }

@@ -38,11 +38,24 @@ export async function ingestSoldComps(env: Env): Promise<number> {
 
   let totalIngested = 0;
 
+  // Map internal categories to SoldComps API categories
+  const categoryMap: Record<string, string> = {
+    pokemon: "pokemon_cards",
+    sports_baseball: "sports_cards",
+    sports_basketball: "sports_cards",
+    sports_football: "sports_cards",
+    sports_hockey: "sports_cards",
+    tcg_mtg: "trading_cards",
+    tcg_yugioh: "trading_cards",
+    other: "trading_cards",
+  };
+
   for (const card of cards.results) {
     try {
       const searchQuery = card.name as string;
+      const soldCompsCategory = categoryMap[card.category as string] || "trading_cards";
       const response = await fetch(
-        `https://sold-comps.com/api/v1/search?q=${encodeURIComponent(searchQuery)}&category=sports_cards&limit=50`,
+        `https://sold-comps.com/api/v1/search?q=${encodeURIComponent(searchQuery)}&category=${soldCompsCategory}&limit=50`,
         {
           headers: {
             Authorization: `Bearer ${env.SOLDCOMPS_API_KEY}`,

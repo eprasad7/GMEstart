@@ -163,7 +163,7 @@ function AppContent() {
           <CardDetail card={selectedCard} onBack={() => setSelectedCard(null)} />
         ) : view === "dashboard" ? (
           <div className="space-y-6">
-            <MarketOverview />
+            <MarketOverview onCardSelect={handleSelectCard} />
             {alerts.length > 0 && (
               <div>
                 <div className="mb-3 flex items-center justify-between">
