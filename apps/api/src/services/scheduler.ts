@@ -6,6 +6,8 @@ import { ingestPopulationReports } from "./ingestion/population";
 import { computeFeatures } from "./features";
 import { runAnomalyDetection } from "./anomaly";
 import { computeAggregates } from "./aggregates";
+import { batchPredict } from "./inference";
+import { rollUpSentiment } from "./sentiment-rollup";
 
 /**
  * Cron Trigger handler — routes to the right ingestion job
@@ -17,7 +19,9 @@ import { computeAggregates } from "./aggregates";
  *   "0 2 * * *"      → PriceCharting daily
  *   "0 3 * * *"      → PSA population reports
  *   "0 4 * * *"      → Feature computation + aggregates
- *   "0 5 * * *"      → Anomaly detection
+ *   "0 5 * * *"      → Generate prices (batchPredict → model_predictions)
+ *   "0 6 * * *"      → Anomaly detection
+ *   "0 * * * *"       → Sentiment rollup (hourly 24h→7d→30d)
  */
 export async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   const cron = event.cron;
@@ -89,9 +93,24 @@ export async function handleScheduled(event: ScheduledEvent, env: Env): Promise<
       }
 
       case "0 5 * * *": {
+        await logStart("predictions", "daily");
+        const count = await batchPredict(env);
+        await logComplete("predictions", count);
+        break;
+      }
+
+      case "0 6 * * *": {
         await logStart("anomaly", "daily");
         const count = await runAnomalyDetection(env);
         await logComplete("anomaly", count);
+        break;
+      }
+
+      case "0 * * * *": {
+        // Hourly sentiment rollup — aggregate 24h scores into 7d and 30d
+        await logStart("sentiment_rollup", "hourly");
+        const count = await rollUpSentiment(env);
+        await logComplete("sentiment_rollup", count);
         break;
       }
     }

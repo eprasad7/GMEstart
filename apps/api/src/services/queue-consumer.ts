@@ -115,15 +115,14 @@ export async function handleSentimentQueue(
           : -label.score
         : 0;
 
-      // Upsert sentiment score
+      // Insert individual sentiment observation (raw data).
+      // The hourly rollup job aggregates these into 24h/7d/30d buckets.
+      const today = new Date().toISOString().split("T")[0];
       await env.DB.prepare(
-        `INSERT INTO sentiment_scores (card_id, source, score, mention_count, period, top_posts)
-         VALUES (?, ?, ?, 1, '24h', ?)
-         ON CONFLICT(card_id, source, period, computed_at) DO UPDATE SET
-           score = (sentiment_scores.score * sentiment_scores.mention_count + excluded.score) / (sentiment_scores.mention_count + 1),
-           mention_count = sentiment_scores.mention_count + 1`
+        `INSERT INTO sentiment_raw (card_id, source, score, post_url, engagement, observed_at)
+         VALUES (?, ?, ?, ?, ?, datetime('now'))`
       )
-        .bind(data.card_id, data.source, score, JSON.stringify([data.post_url]))
+        .bind(data.card_id, data.source, score, data.post_url, data.engagement)
         .run();
     } catch (err) {
       console.error("Sentiment analysis failed:", err);

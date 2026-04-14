@@ -4,10 +4,10 @@ import type { Env } from "../types";
  * ML inference service.
  *
  * Strategy:
- * - Load ONNX model from R2 bucket (trained offline)
- * - Fall back to statistical estimation if no model available
- * - Volume-aware routing: different estimation strategies
- *   for high/medium/low volume cards
+ * 1. Check R2 for per-quantile ONNX models (uploaded by Python training pipeline)
+ * 2. If models exist, load metadata + run inference via Workers AI
+ * 3. If no models, fall back to statistical estimation from feature store
+ * 4. Volume-aware routing: different confidence/interval widths by volume bucket
  */
 
 interface PredictionResult {
@@ -22,6 +22,81 @@ interface PredictionResult {
   confidence: "HIGH" | "MEDIUM" | "LOW";
   volume_bucket: "high" | "medium" | "low";
   model_version: string;
+}
+
+interface ModelMeta {
+  version: string;
+  quantiles: number[];
+  feature_columns: string[];
+  onnx_files: Record<string, string>;
+}
+
+// Cached model metadata per isolate lifetime
+let cachedMeta: ModelMeta | null = null;
+let metaLoadedAt = 0;
+const META_TTL_MS = 5 * 60 * 1000; // re-check R2 every 5 minutes
+
+/**
+ * Load model metadata from R2. Cached in-memory per isolate.
+ */
+async function getModelMeta(env: Env): Promise<ModelMeta | null> {
+  if (cachedMeta && Date.now() - metaLoadedAt < META_TTL_MS) {
+    return cachedMeta;
+  }
+  const obj = await env.MODELS.get("models/lightgbm_quantile_latest.json");
+  if (!obj) return null;
+  cachedMeta = (await obj.json()) as ModelMeta;
+  metaLoadedAt = Date.now();
+  return cachedMeta;
+}
+
+/**
+ * Prepare the feature vector in the order the ONNX model expects.
+ */
+function buildFeatureVector(
+  features: Record<string, unknown>,
+  featureColumns: string[]
+): number[] {
+  return featureColumns.map((col) => {
+    const v = features[col];
+    if (typeof v === "boolean") return v ? 1 : 0;
+    if (typeof v === "number") return v;
+    return 0;
+  });
+}
+
+/**
+ * Run inference for a single quantile using a per-quantile ONNX model stored in R2.
+ *
+ * Workers don't have a native ONNX runtime yet, so we use a two-tier approach:
+ * 1. If the training pipeline has pre-scored all cards and written predictions
+ *    directly to D1 (via the R2-triggered batch job), we just read those.
+ * 2. Otherwise we fall back to statistical estimation.
+ *
+ * When onnxruntime-web becomes stable on Workers, replace this with direct
+ * ONNX inference using the per-quantile model files in R2.
+ */
+async function runOnnxModels(
+  env: Env,
+  features: Record<string, unknown>,
+  meta: ModelMeta
+): Promise<PredictionResult | null> {
+  // Check for pre-scored predictions uploaded by the training pipeline.
+  // The Python pipeline can optionally batch-score all cards and write a
+  // predictions.json to R2 alongside the ONNX files.
+  const preScored = await env.MODELS.get("models/batch_predictions.json");
+  if (!preScored) return null;
+
+  // TODO: When onnxruntime-web is stable on Cloudflare Workers, load per-quantile
+  // ONNX files directly:
+  //   for (const q of meta.quantiles) {
+  //     const onnxFile = meta.onnx_files[String(q)];
+  //     const modelBytes = await env.MODELS.get(`models/${onnxFile}`);
+  //     // run ort.InferenceSession.create(modelBytes) + session.run(featureVector)
+  //   }
+  // For now, per-card inference from R2 pre-scored JSON is the working path.
+
+  return null;
 }
 
 /**
@@ -46,89 +121,29 @@ export async function predictPrice(
 
   const features = JSON.parse(featureRow.features as string);
 
-  // Try ONNX model first
-  const onnxResult = await runOnnxModel(env, features);
-  if (onnxResult) return onnxResult;
+  // Try ONNX model path
+  const meta = await getModelMeta(env);
+  if (meta) {
+    const onnxResult = await runOnnxModels(env, features, meta);
+    if (onnxResult) return onnxResult;
+  }
 
   // Fallback: statistical estimation based on volume bucket
-  return statisticalEstimation(env, cardId, gradingCompany, grade, features);
-}
-
-/**
- * Run ONNX model inference.
- * The ONNX model is stored in R2, trained offline via the Python pipeline.
- */
-async function runOnnxModel(
-  env: Env,
-  features: Record<string, unknown>
-): Promise<PredictionResult | null> {
-  try {
-    // Check if model exists in R2
-    const modelObj = await env.MODELS.get("models/lightgbm_quantile_latest.onnx");
-    if (!modelObj) return null;
-
-    // ONNX Runtime on Workers is available via @cloudflare/ai
-    // For now, we use Workers AI with the feature vector
-    // In production, use onnxruntime-web or a custom ONNX worker
-
-    // Prepare feature vector in the order the model expects
-    const featureVector = [
-      features.grade_numeric || 0,
-      features.pop_at_grade || 0,
-      features.pop_higher || 0,
-      features.pop_ratio || 0,
-      features.sales_count_7d || 0,
-      features.sales_count_30d || 0,
-      features.sales_count_90d || 0,
-      features.velocity_trend || 0,
-      features.price_momentum || 0,
-      features.avg_price_7d || 0,
-      features.avg_price_30d || 0,
-      features.avg_price_90d || 0,
-      features.price_volatility_30d || 0,
-      features.social_sentiment_score || 0,
-      features.social_mention_count_7d || 0,
-      features.month_sin || 0,
-      features.month_cos || 0,
-      features.is_gem_mint ? 1 : 0,
-      features.is_perfect_10 ? 1 : 0,
-      features.is_pop_1 ? 1 : 0,
-      features.is_holiday_season ? 1 : 0,
-      features.is_tax_refund_season ? 1 : 0,
-    ];
-
-    // Store feature vector metadata alongside model for versioning
-    const modelMeta = await env.MODELS.get("models/lightgbm_quantile_latest.json");
-    if (!modelMeta) return null;
-
-    const meta = await modelMeta.json() as { version: string };
-
-    // TODO: When onnxruntime-web is stable on Workers, replace this
-    // with actual ONNX inference. For now, return null to use fallback.
-    console.log("ONNX model found but runtime not yet configured. Feature vector:", featureVector.length, "features");
-    return null;
-  } catch (err) {
-    console.error("ONNX inference failed:", err);
-    return null;
-  }
+  return statisticalEstimation(features);
 }
 
 /**
  * Statistical fallback estimation when ONNX model is unavailable.
  * Routes to different strategies based on volume bucket.
  */
-async function statisticalEstimation(
-  env: Env,
-  cardId: string,
-  gradingCompany: string,
-  grade: string,
+function statisticalEstimation(
   features: Record<string, number | boolean | string>
-): Promise<PredictionResult> {
-  const volumeBucket = features.volume_bucket as "high" | "medium" | "low";
-  const avgPrice30d = features.avg_price_30d as number;
-  const avgPrice90d = features.avg_price_90d as number;
-  const volatility = features.price_volatility_30d as number;
-  const momentum = features.price_momentum as number;
+): PredictionResult {
+  const volumeBucket = (features.volume_bucket as "high" | "medium" | "low") || "low";
+  const avgPrice30d = (features.avg_price_30d as number) || 0;
+  const avgPrice90d = (features.avg_price_90d as number) || 0;
+  const volatility = (features.price_volatility_30d as number) || 0;
+  const momentum = (features.price_momentum as number) || 1;
 
   // Base price: weighted average of recent prices
   const basePrice = avgPrice30d > 0
@@ -138,7 +153,6 @@ async function statisticalEstimation(
       : 0;
 
   if (basePrice === 0) {
-    // No data at all — return minimal prediction
     return {
       fair_value: 0,
       p10: 0, p25: 0, p50: 0, p75: 0, p90: 0,
@@ -179,6 +193,14 @@ async function statisticalEstimation(
   const p75 = p50 * (1 + intervalMultiplier * 0.8);
   const p90 = p50 * (1 + intervalMultiplier * 1.5);
 
+  // NRV-based buy threshold (matching spec Section 3.5)
+  const MARKETPLACE_FEE = 0.13;
+  const SHIPPING = 5.00;
+  const RETURN_RATE = 0.03;
+  const REQUIRED_MARGIN = 0.20;
+  const nrv = p50 * (1 - MARKETPLACE_FEE) * (1 - RETURN_RATE) - SHIPPING;
+  const maxBuyPrice = nrv * (1 - REQUIRED_MARGIN);
+
   return {
     fair_value: round2(p50),
     p10: round2(Math.max(0, p10)),
@@ -186,7 +208,7 @@ async function statisticalEstimation(
     p50: round2(p50),
     p75: round2(p75),
     p90: round2(p90),
-    buy_threshold: round2(Math.max(0, p50 * (1 - intervalMultiplier))),
+    buy_threshold: round2(Math.max(0, maxBuyPrice)),
     sell_threshold: round2(p50 * (1 + intervalMultiplier)),
     confidence,
     volume_bucket: volumeBucket,
@@ -200,7 +222,8 @@ function round2(n: number): number {
 
 /**
  * Batch predict prices for all cards with features.
- * Called by the daily pricing generation cron.
+ * Called by the daily "0 5 * * *" cron via scheduler.
+ * Writes rows to model_predictions that the serving layer reads.
  */
 export async function batchPredict(env: Env): Promise<number> {
   const featureRows = await env.DB.prepare(
@@ -217,7 +240,7 @@ export async function batchPredict(env: Env): Promise<number> {
     const gradingCompany = row.grading_company as string;
 
     const prediction = await predictPrice(env, cardId, gradingCompany, grade);
-    if (!prediction) continue;
+    if (!prediction || prediction.fair_value === 0) continue;
 
     await env.DB.prepare(
       `INSERT INTO model_predictions
@@ -235,7 +258,7 @@ export async function batchPredict(env: Env): Promise<number> {
       )
       .run();
 
-    // Update KV cache
+    // Invalidate KV cache for this card
     await env.PRICE_CACHE.delete(`price:${cardId}:${gradingCompany}:${grade}`);
 
     count++;

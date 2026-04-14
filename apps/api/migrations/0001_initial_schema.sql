@@ -88,8 +88,24 @@ CREATE TABLE IF NOT EXISTS population_reports (
 
 CREATE INDEX idx_pop_card ON population_reports(card_id, grading_company, snapshot_date DESC);
 
+-- ─── Sentiment Raw ───
+-- Individual sentiment observations from queue consumer
+CREATE TABLE IF NOT EXISTS sentiment_raw (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  card_id TEXT NOT NULL REFERENCES card_catalog(id),
+  source TEXT NOT NULL CHECK (source IN ('reddit','twitter')),
+  score REAL NOT NULL,
+  post_url TEXT,
+  engagement INTEGER NOT NULL DEFAULT 0,
+  observed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_sentiment_raw_card ON sentiment_raw(card_id, observed_at DESC);
+CREATE INDEX idx_sentiment_raw_date ON sentiment_raw(observed_at DESC);
+
 -- ─── Sentiment Scores ───
--- Aggregated social sentiment per card
+-- Rolled-up sentiment per card+source+period, refreshed hourly.
+-- rollup_date is the calendar date the rollup covers (stable key for upsert).
 CREATE TABLE IF NOT EXISTS sentiment_scores (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   card_id TEXT NOT NULL REFERENCES card_catalog(id),
@@ -98,11 +114,12 @@ CREATE TABLE IF NOT EXISTS sentiment_scores (
   mention_count INTEGER NOT NULL DEFAULT 0,
   period TEXT NOT NULL CHECK (period IN ('24h','7d','30d')),
   top_posts TEXT,
+  rollup_date TEXT NOT NULL,
   computed_at TEXT NOT NULL DEFAULT (datetime('now')),
-  UNIQUE(card_id, source, period, computed_at)
+  UNIQUE(card_id, source, period, rollup_date)
 );
 
-CREATE INDEX idx_sentiment_card ON sentiment_scores(card_id, computed_at DESC);
+CREATE INDEX idx_sentiment_card ON sentiment_scores(card_id, rollup_date DESC);
 
 -- ─── Model Predictions ───
 -- ML model outputs with confidence bands

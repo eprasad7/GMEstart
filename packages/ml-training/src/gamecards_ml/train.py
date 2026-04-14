@@ -161,13 +161,22 @@ def evaluate_models(
     mdape = float(np.median(abs_pct_errors) * 100)
     mae = float(np.mean(np.abs(y_actual - y_pred)))
 
-    # Coverage of 90% prediction interval
+    # Coverage of raw 90% prediction interval (before conformal calibration)
     lower = np.expm1(models[0.10].predict(X_test))
     upper = np.expm1(models[0.90].predict(X_test))
     coverage = float(np.mean((y_actual >= lower) & (y_actual <= upper)) * 100)
 
     # Interval width
     interval_width = float(np.mean((upper - lower) / np.maximum(y_pred, 1e-8)) * 100)
+
+    # Conformal calibration — guarantees coverage
+    from .conformal import train_with_conformal
+
+    conformal_pricer, conformal_metrics = train_with_conformal(
+        models, None, None, X_test, y_test, alpha=0.10, cal_fraction=0.3
+    )
+    for k, v in conformal_metrics.items():
+        mlflow.log_metric(k, v)
 
     # Directional accuracy (did we predict the right trend?)
     if len(y_actual) > 1:

@@ -3,6 +3,21 @@ import type { Env, EvaluateRequest, EvaluateResponse } from "../types";
 
 export const evaluateRoutes = new Hono<{ Bindings: Env }>();
 
+// Retail economics constants (Section 3.5 of spec)
+const MARKETPLACE_FEE_PCT = 0.13; // eBay ~13%
+const SHIPPING_COST = 5.0;        // Average shipping + handling
+const RETURN_RATE = 0.03;         // ~3% return/fraud rate
+const REQUIRED_MARGIN = 0.20;     // 20% minimum gross margin
+
+/**
+ * Compute Net Realizable Value — what GameStop actually nets after a sale.
+ */
+function computeNrv(fairValue: number): number {
+  const gross = fairValue * (1 - MARKETPLACE_FEE_PCT);
+  const netAfterReturns = gross * (1 - RETURN_RATE);
+  return netAfterReturns - SHIPPING_COST;
+}
+
 // POST /v1/evaluate — evaluate a card at an offered price
 evaluateRoutes.post("/", async (c) => {
   const body = await c.req.json<EvaluateRequest>();
@@ -38,49 +53,58 @@ evaluateRoutes.post("/", async (c) => {
     }
 
     const avgPrice = recentSales.avg_price as number;
-    const margin = (avgPrice - offered_price) / avgPrice;
+    const nrv = computeNrv(avgPrice);
+    const maxBuyPrice = nrv * (1 - REQUIRED_MARGIN);
+    const nrvMargin = offered_price < nrv ? ((nrv - offered_price) / nrv) * 100 : ((offered_price - nrv) / nrv) * -100;
 
     const response: EvaluateResponse = {
-      decision: margin > 0.2 ? "REVIEW_BUY" : margin > 0 ? "FAIR_VALUE" : "SELL_SIGNAL",
+      decision: offered_price < maxBuyPrice ? "REVIEW_BUY" : offered_price < nrv ? "FAIR_VALUE" : "SELL_SIGNAL",
       fair_value: Math.round(avgPrice * 100) / 100,
-      margin: Math.round(margin * 10000) / 100,
+      margin: Math.round(nrvMargin * 100) / 100,
       confidence: "LOW",
-      reasoning: `Based on ${recentSales.count} sales in last 90 days (no ML model available). Average sale: $${avgPrice.toFixed(2)}.`,
+      reasoning: `Based on ${recentSales.count} sales in last 90 days (no ML model). Fair value: $${avgPrice.toFixed(2)}, NRV after fees/shipping/returns: $${nrv.toFixed(2)}, max buy price at ${REQUIRED_MARGIN * 100}% margin: $${maxBuyPrice.toFixed(2)}.`,
     };
 
     return c.json(response);
   }
 
   const fairValue = prediction.fair_value as number;
-  const buyThreshold = prediction.buy_threshold as number;
-  const sellThreshold = prediction.sell_threshold as number;
+  const p80 = prediction.p90 as number; // sell threshold from model
   const confidence = prediction.confidence as "HIGH" | "MEDIUM" | "LOW";
   const volumeBucket = prediction.volume_bucket as string;
-  const margin = (fairValue - offered_price) / fairValue;
+
+  // NRV-based evaluation (Section 3.5)
+  const nrv = computeNrv(fairValue);
+  const maxBuyPrice = nrv * (1 - REQUIRED_MARGIN);
+  const nrvMargin = offered_price < nrv ? ((nrv - offered_price) / nrv) * 100 : ((offered_price - nrv) / nrv) * -100;
 
   let decision: EvaluateResponse["decision"];
   let reasoning: string;
 
-  if (offered_price < buyThreshold) {
+  if (offered_price < maxBuyPrice) {
+    // Price is below max buy threshold — profitable after all costs
     if (confidence !== "LOW") {
       decision = "STRONG_BUY";
-      reasoning = `Price $${offered_price.toFixed(2)} is below p20 buy threshold ($${buyThreshold.toFixed(2)}). Fair value: $${fairValue.toFixed(2)}. ${confidence} confidence, ${volumeBucket} volume.`;
+      reasoning = `Price $${offered_price.toFixed(2)} is below max buy price $${maxBuyPrice.toFixed(2)} (NRV: $${nrv.toFixed(2)}, fair value: $${fairValue.toFixed(2)}). Expected ${nrvMargin.toFixed(1)}% net margin after fees, shipping, and returns. ${confidence} confidence, ${volumeBucket} volume.`;
     } else {
       decision = "REVIEW_BUY";
-      reasoning = `Price is below buy threshold but confidence is LOW (${volumeBucket} volume card). Recommend human review.`;
+      reasoning = `Price is below max buy price but confidence is LOW (${volumeBucket} volume card). NRV: $${nrv.toFixed(2)}, max buy: $${maxBuyPrice.toFixed(2)}. Recommend human review.`;
     }
-  } else if (offered_price > sellThreshold) {
+  } else if (offered_price > p80) {
     decision = "SELL_SIGNAL";
-    reasoning = `Price $${offered_price.toFixed(2)} exceeds p80 sell threshold ($${sellThreshold.toFixed(2)}). Consider selling at this price.`;
+    reasoning = `Price $${offered_price.toFixed(2)} exceeds p80 ($${p80.toFixed(2)}). Consider selling at this price. NRV at fair value: $${nrv.toFixed(2)}.`;
+  } else if (offered_price > nrv) {
+    decision = "FAIR_VALUE";
+    reasoning = `Price $${offered_price.toFixed(2)} exceeds NRV $${nrv.toFixed(2)} — buying at this price would not meet the ${REQUIRED_MARGIN * 100}% margin target. Fair value: $${fairValue.toFixed(2)}.`;
   } else {
     decision = "FAIR_VALUE";
-    reasoning = `Price $${offered_price.toFixed(2)} is within fair value range ($${buyThreshold.toFixed(2)} - $${sellThreshold.toFixed(2)}). Fair value: $${fairValue.toFixed(2)}.`;
+    reasoning = `Price $${offered_price.toFixed(2)} is within range but above max buy price $${maxBuyPrice.toFixed(2)}. Margin of ${nrvMargin.toFixed(1)}% is below the ${REQUIRED_MARGIN * 100}% target. Fair value: $${fairValue.toFixed(2)}.`;
   }
 
   const response: EvaluateResponse = {
     decision,
     fair_value: Math.round(fairValue * 100) / 100,
-    margin: Math.round(margin * 10000) / 100,
+    margin: Math.round(nrvMargin * 100) / 100,
     confidence,
     reasoning,
   };

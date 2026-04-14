@@ -7,16 +7,22 @@ export const sentimentRoutes = new Hono<{ Bindings: Env }>();
 sentimentRoutes.get("/:cardId", async (c) => {
   const cardId = c.req.param("cardId");
 
-  // Get latest sentiment scores across all periods
+  // Get the most recent rollup for each source+period combination
   const scores = await c.env.DB.prepare(
-    `SELECT * FROM sentiment_scores
-     WHERE card_id = ?
-       AND computed_at = (
-         SELECT MAX(computed_at) FROM sentiment_scores WHERE card_id = ? AND source = sentiment_scores.source AND period = sentiment_scores.period
-       )
-     ORDER BY source, period`
+    `SELECT s.* FROM sentiment_scores s
+     INNER JOIN (
+       SELECT card_id, source, period, MAX(rollup_date) as max_date
+       FROM sentiment_scores
+       WHERE card_id = ?
+       GROUP BY card_id, source, period
+     ) latest
+       ON s.card_id = latest.card_id
+       AND s.source = latest.source
+       AND s.period = latest.period
+       AND s.rollup_date = latest.max_date
+     ORDER BY s.source, s.period`
   )
-    .bind(cardId, cardId)
+    .bind(cardId)
     .all();
 
   // Compute composite score (weighted average: 24h=0.5, 7d=0.3, 30d=0.2)
@@ -29,12 +35,14 @@ sentimentRoutes.get("/:cardId", async (c) => {
     const w = periodWeights[s.period as string] || 0.2;
     weightedSum += (s.score as number) * w;
     totalWeight += w;
-    totalMentions += s.mention_count as number;
+    if (s.period === "7d") {
+      totalMentions += s.mention_count as number;
+    }
   }
 
   const compositeScore = totalWeight > 0 ? weightedSum / totalWeight : 0;
 
-  // Determine trend
+  // Determine trend by comparing 24h score to 7d score
   const score24h = scores.results.find((s) => s.period === "24h")?.score as number | undefined;
   const score7d = scores.results.find((s) => s.period === "7d")?.score as number | undefined;
 
@@ -70,7 +78,7 @@ sentimentRoutes.get("/trending/all", async (c) => {
      FROM sentiment_scores s
      JOIN card_catalog cc ON cc.id = s.card_id
      WHERE s.period = '24h'
-       AND s.computed_at >= datetime('now', '-1 day')
+       AND s.rollup_date >= date('now', '-1 day')
        AND s.mention_count > 5
      ORDER BY s.score DESC, s.mention_count DESC
      LIMIT ?`

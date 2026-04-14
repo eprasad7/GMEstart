@@ -127,12 +127,12 @@ async function computeCardFeatures(
       .bind(cardId, gradingCompany, grade)
       .first(),
 
-    // Sentiment
+    // Sentiment (from hourly rollup)
     env.DB.prepare(
       `SELECT score, mention_count
        FROM sentiment_scores
        WHERE card_id = ? AND period = '7d'
-       ORDER BY computed_at DESC LIMIT 1`
+       ORDER BY rollup_date DESC LIMIT 1`
     )
       .bind(cardId)
       .first(),

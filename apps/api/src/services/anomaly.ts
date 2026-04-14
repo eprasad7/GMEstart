@@ -2,19 +2,19 @@ import type { Env } from "../types";
 
 /**
  * Anomaly detection system.
- * Runs daily at 5am and on-demand via alerts.
+ * Runs daily at 6am via cron.
  *
  * Detects:
- * 1. Shill bidding patterns
- * 2. Data quality issues (lot sales, currency, Best Offer bias)
- * 3. Market manipulation (pump & dump)
- * 4. Price outliers (statistical)
+ * 1. Price outliers (statistical, computed from 30-day raw observations)
+ * 2. Seller concentration (if seller_id available)
+ * 3. Data quality issues (sub-$1 graded cards)
+ * 4. Price spikes/crashes (7d vs 30d moving average divergence)
  */
 export async function runAnomalyDetection(env: Env): Promise<number> {
   let totalFlagged = 0;
 
   totalFlagged += await detectPriceOutliers(env);
-  totalFlagged += await detectShillBidding(env);
+  totalFlagged += await detectSellerConcentration(env);
   totalFlagged += await detectDataQualityIssues(env);
   totalFlagged += await detectPriceSpikes(env);
 
@@ -22,23 +22,34 @@ export async function runAnomalyDetection(env: Env): Promise<number> {
 }
 
 /**
- * Statistical price outlier detection using IQR method.
- * Flags prices that are >3x IQR from the median.
+ * Statistical price outlier detection.
+ * Computes baselines on-the-fly from 30-day raw observations
+ * instead of relying on potentially stale monthly aggregates.
  */
 async function detectPriceOutliers(env: Env): Promise<number> {
-  // Get recent observations that haven't been checked
+  // Get recent observations alongside live 30-day baselines
   const recentObs = await env.DB.prepare(
-    `SELECT po.id, po.card_id, po.price_usd, po.grading_company, po.grade,
-            pa.avg_price, pa.min_price, pa.max_price, pa.sale_count
+    `SELECT
+       po.id, po.card_id, po.price_usd, po.grading_company, po.grade,
+       baseline.avg_price, baseline.min_price, baseline.max_price, baseline.sale_count
      FROM price_observations po
-     LEFT JOIN price_aggregates pa
-       ON pa.card_id = po.card_id
-       AND pa.grading_company = COALESCE(po.grading_company, 'RAW')
-       AND pa.grade = COALESCE(po.grade, 'RAW')
-       AND pa.period = 'monthly'
+     INNER JOIN (
+       SELECT card_id, COALESCE(grading_company, 'RAW') as gc, COALESCE(grade, 'RAW') as g,
+              AVG(price_usd) as avg_price,
+              MIN(price_usd) as min_price,
+              MAX(price_usd) as max_price,
+              COUNT(*) as sale_count
+       FROM price_observations
+       WHERE sale_date >= date('now', '-30 days')
+         AND is_anomaly = 0
+       GROUP BY card_id, gc, g
+       HAVING sale_count >= 5
+     ) baseline
+       ON baseline.card_id = po.card_id
+       AND baseline.gc = COALESCE(po.grading_company, 'RAW')
+       AND baseline.g = COALESCE(po.grade, 'RAW')
      WHERE po.is_anomaly = 0
-       AND po.created_at >= datetime('now', '-1 day')
-       AND pa.sale_count >= 5`
+       AND po.created_at >= datetime('now', '-1 day')`
   )
     .bind()
     .all();
@@ -51,7 +62,7 @@ async function detectPriceOutliers(env: Env): Promise<number> {
     const minPrice = obs.min_price as number;
     const maxPrice = obs.max_price as number;
 
-    // Simple IQR-like detection: flag if price is >3x the range from average
+    // Flag if price is >3x the observed range from average
     const range = maxPrice - minPrice;
     const lowerBound = avgPrice - 3 * range;
     const upperBound = avgPrice + 3 * range;
@@ -62,8 +73,8 @@ async function detectPriceOutliers(env: Env): Promise<number> {
       )
         .bind(
           price > upperBound
-            ? `Price $${price.toFixed(2)} exceeds upper bound $${upperBound.toFixed(2)} (avg: $${avgPrice.toFixed(2)})`
-            : `Price $${price.toFixed(2)} below lower bound $${lowerBound.toFixed(2)} (avg: $${avgPrice.toFixed(2)})`,
+            ? `Price $${price.toFixed(2)} exceeds upper bound $${upperBound.toFixed(2)} (30d avg: $${avgPrice.toFixed(2)})`
+            : `Price $${price.toFixed(2)} below lower bound $${lowerBound.toFixed(2)} (30d avg: $${avgPrice.toFixed(2)})`,
           obs.id
         )
         .run();
@@ -75,25 +86,41 @@ async function detectPriceOutliers(env: Env): Promise<number> {
 }
 
 /**
- * Detect shill bidding patterns.
- * Key indicators:
- * - Same seller with abnormally high prices
- * - Concentrated bidding patterns
- * - New sellers with suspiciously high sale prices
+ * Detect sellers with prices consistently above 30-day market average.
+ * Only runs if seller_id is populated in the data.
  */
-async function detectShillBidding(env: Env): Promise<number> {
-  // Find sellers with prices consistently above market
+async function detectSellerConcentration(env: Env): Promise<number> {
+  // Check if we have any seller_id data at all
+  const hasSellerData = await env.DB.prepare(
+    `SELECT COUNT(*) as cnt FROM price_observations
+     WHERE seller_id IS NOT NULL AND sale_date >= date('now', '-30 days')
+     LIMIT 1`
+  )
+    .bind()
+    .first();
+
+  if (!hasSellerData || (hasSellerData.cnt as number) === 0) {
+    return 0; // seller_id not available from feeds — skip
+  }
+
+  // Compute seller averages against live 30-day baselines
   const suspectSellers = await env.DB.prepare(
-    `SELECT po.seller_id,
-            COUNT(*) as sale_count,
-            AVG(po.price_usd) as seller_avg,
-            AVG(pa.avg_price) as market_avg
+    `SELECT
+       po.seller_id,
+       COUNT(*) as sale_count,
+       AVG(po.price_usd) as seller_avg,
+       AVG(baseline.avg_price) as market_avg
      FROM price_observations po
-     JOIN price_aggregates pa
-       ON pa.card_id = po.card_id
-       AND pa.grading_company = COALESCE(po.grading_company, 'RAW')
-       AND pa.grade = COALESCE(po.grade, 'RAW')
-       AND pa.period = 'monthly'
+     INNER JOIN (
+       SELECT card_id, COALESCE(grading_company, 'RAW') as gc, COALESCE(grade, 'RAW') as g,
+              AVG(price_usd) as avg_price
+       FROM price_observations
+       WHERE sale_date >= date('now', '-30 days') AND is_anomaly = 0
+       GROUP BY card_id, gc, g
+     ) baseline
+       ON baseline.card_id = po.card_id
+       AND baseline.gc = COALESCE(po.grading_company, 'RAW')
+       AND baseline.g = COALESCE(po.grade, 'RAW')
      WHERE po.seller_id IS NOT NULL
        AND po.sale_date >= date('now', '-30 days')
        AND po.is_anomaly = 0
@@ -106,18 +133,15 @@ async function detectShillBidding(env: Env): Promise<number> {
   let flagged = 0;
 
   for (const seller of suspectSellers.results) {
-    // Flag all recent sales from this seller
+    const pctAbove = Math.round(
+      (((seller.seller_avg as number) / (seller.market_avg as number)) - 1) * 100
+    );
     const result = await env.DB.prepare(
       `UPDATE price_observations
-       SET is_anomaly = 1, anomaly_reason = 'Suspected shill bidding — seller avg ' || ? || '% above market'
+       SET is_anomaly = 1, anomaly_reason = 'Seller concentration — avg ' || ? || '% above 30d market'
        WHERE seller_id = ? AND sale_date >= date('now', '-30 days') AND is_anomaly = 0`
     )
-      .bind(
-        Math.round(
-          (((seller.seller_avg as number) / (seller.market_avg as number)) - 1) * 100
-        ),
-        seller.seller_id
-      )
+      .bind(pctAbove, seller.seller_id)
       .run();
 
     flagged += result.meta.changes;
@@ -128,12 +152,8 @@ async function detectShillBidding(env: Env): Promise<number> {
 
 /**
  * Detect data quality issues.
- * - Lot sales that slipped through
- * - Suspiciously low prices (likely accessories, not cards)
- * - Duplicate entries
  */
 async function detectDataQualityIssues(env: Env): Promise<number> {
-  // Flag observations with very low prices for graded cards (likely not actual cards)
   const result = await env.DB.prepare(
     `UPDATE price_observations
      SET is_anomaly = 1, anomaly_reason = 'Suspiciously low price for graded card'
@@ -151,9 +171,9 @@ async function detectDataQualityIssues(env: Env): Promise<number> {
 
 /**
  * Detect sudden price spikes/crashes and create alerts.
+ * Uses live computed 7d vs 30d moving averages.
  */
 async function detectPriceSpikes(env: Env): Promise<number> {
-  // Find cards where 7d average deviates >30% from 30d average
   const spikes = await env.DB.prepare(
     `SELECT
        card_id, grading_company, grade,
@@ -178,7 +198,6 @@ async function detectPriceSpikes(env: Env): Promise<number> {
     const changePct = ((avg7d - avg30d) / avg30d) * 100;
     const alertType = changePct > 0 ? "price_spike" : "price_crash";
 
-    // Check if alert already exists for this card recently
     const existing = await env.DB.prepare(
       `SELECT id FROM price_alerts
        WHERE card_id = ? AND alert_type = ? AND is_active = 1
