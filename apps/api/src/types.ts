@@ -27,6 +27,12 @@ export interface Env {
   REDDIT_CLIENT_SECRET: string;
   POKEMON_PRICE_TRACKER_KEY: string;
   API_KEY: string;
+
+  // Durable Object bindings (Agents)
+  PriceMonitorAgent: DurableObjectNamespace;
+  MarketIntelligenceAgent: DurableObjectNamespace;
+  CompetitorTrackerAgent: DurableObjectNamespace;
+  PricingRecommendationAgent: DurableObjectNamespace;
 }
 
 // ─── Domain Types ───

@@ -14,7 +14,7 @@
     }
   ],
 
-  // KV Namespace — hot price cache
+  // KV Namespace — hot price cache + rate limiting
   "kv_namespaces": [
     {
       "binding": "PRICE_CACHE",
@@ -53,6 +53,29 @@
       }
     ]
   },
+
+  // Durable Objects — Agents
+  "durable_objects": {
+    "bindings": [
+      { "name": "PriceMonitorAgent", "class_name": "PriceMonitorAgent" },
+      { "name": "MarketIntelligenceAgent", "class_name": "MarketIntelligenceAgent" },
+      { "name": "CompetitorTrackerAgent", "class_name": "CompetitorTrackerAgent" },
+      { "name": "PricingRecommendationAgent", "class_name": "PricingRecommendationAgent" }
+    ]
+  },
+
+  // DO migrations
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "PriceMonitorAgent",
+        "MarketIntelligenceAgent",
+        "CompetitorTrackerAgent",
+        "PricingRecommendationAgent"
+      ]
+    }
+  ],
 
   // Cron Triggers
   "triggers": {

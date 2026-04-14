@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
+import { routeAgentRequest } from "agents";
 import type { Env } from "./types";
 import { priceRoutes } from "./routes/prices";
 import { historyRoutes } from "./routes/history";
@@ -9,9 +10,16 @@ import { evaluateRoutes } from "./routes/evaluate";
 import { alertRoutes } from "./routes/alerts";
 import { marketRoutes } from "./routes/market";
 import { cardRoutes } from "./routes/cards";
+import { agentRoutes } from "./routes/agents";
 import { handleScheduled } from "./services/scheduler";
 import { handleIngestionQueue, handleSentimentQueue } from "./services/queue-consumer";
 import { apiKeyAuth, rateLimiter } from "./middleware/auth";
+
+// Export agent classes (required for Durable Object bindings)
+export { PriceMonitorAgent } from "./agents/price-monitor";
+export { MarketIntelligenceAgent } from "./agents/market-intelligence";
+export { CompetitorTrackerAgent } from "./agents/competitor-tracker";
+export { PricingRecommendationAgent } from "./agents/pricing-recommendation";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -27,6 +35,7 @@ app.get("/", (c) =>
     service: "GameCards Dynamic Pricing Engine",
     version: "1.0.0",
     status: "healthy",
+    agents: ["price-monitor", "market-intelligence", "competitor-tracker", "pricing-recommendation"],
   })
 );
 
@@ -39,9 +48,17 @@ api.route("/sentiment", sentimentRoutes);
 api.route("/evaluate", evaluateRoutes);
 api.route("/alerts", alertRoutes);
 api.route("/market", marketRoutes);
+api.route("/agents", agentRoutes);
 
 export default {
-  fetch: app.fetch,
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    // Route agent WebSocket/HTTP requests first
+    const agentResponse = await routeAgentRequest(request, env);
+    if (agentResponse) return agentResponse;
+
+    // Fall through to Hono API routes
+    return app.fetch(request, env, ctx);
+  },
 
   // Cron Triggers — scheduled data ingestion
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {

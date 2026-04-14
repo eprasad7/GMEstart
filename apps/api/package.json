@@ -9,6 +9,7 @@
     "db:migrate:prod": "wrangler d1 migrations apply gamecards-db --remote"
   },
   "dependencies": {
+    "agents": "^0.11.0",
     "hono": "^4.7.0"
   },
   "devDependencies": {
