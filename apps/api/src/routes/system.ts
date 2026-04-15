@@ -4,6 +4,7 @@ import { bootstrapCatalog } from "../services/ingestion/bootstrap";
 import { archiveOldObservations } from "../services/archive";
 import { importGameStopInternalSnapshot, importPartnerPriceSnapshot } from "../services/ingestion/data-import";
 import { searchAndImportCards } from "../services/ingestion/pricecharting";
+import { generateMockInternalData } from "../services/ingestion/mock-gamestop";
 
 export const systemRoutes = new Hono<{ Bindings: Env }>();
 
@@ -299,6 +300,21 @@ systemRoutes.post("/seed", async (c) => {
   }
 
   return c.json({ status: "ok", totalImported, results });
+});
+
+/**
+ * POST /v1/system/mock-internal
+ *
+ * Generate mock GameStop internal data (trade-ins, inventory, foot traffic)
+ * for demo purposes. Requires cards in the catalog first.
+ */
+systemRoutes.post("/mock-internal", async (c) => {
+  try {
+    const result = await generateMockInternalData(c.env);
+    return c.json({ status: "ok", ...result });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+  }
 });
 
 /**

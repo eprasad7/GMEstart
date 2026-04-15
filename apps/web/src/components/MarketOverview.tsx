@@ -10,6 +10,8 @@ import {
   ChevronRight,
   Eye,
   Clock,
+  Check,
+  X,
 } from "lucide-react";
 
 interface MarketOverviewProps {
@@ -48,8 +50,23 @@ export function MarketOverview({ alerts = [], onNavigate }: MarketOverviewProps)
     refetchInterval: 120_000,
   });
 
+  const recommendationsQuery = useQuery({
+    queryKey: ["recommendations", "pending"],
+    queryFn: () => api.getRecommendations("pending"),
+    refetchInterval: 120_000,
+  });
+
   const handleCardClick = (cardId: string) => {
     onNavigate?.(`/card/${cardId}`);
+  };
+
+  const handleRecommendationReview = async (id: number, status: "approved" | "rejected") => {
+    try {
+      await api.reviewRecommendation(id, status);
+      await recommendationsQuery.refetch();
+    } catch {
+      // Leave the item in place if the update fails
+    }
   };
 
   if (isLoading) {
@@ -72,8 +89,14 @@ export function MarketOverview({ alerts = [], onNavigate }: MarketOverviewProps)
   const bigMoves = moversUp?.movers?.filter((m) => Math.abs(m.change_pct) >= 10).slice(0, 5) || [];
   const trendingCards = trending?.trending?.slice(0, 6) || [];
   const staleCards = staleData?.cards || [];
+  const pendingRecommendations = recommendationsQuery.data?.recommendations?.slice(0, 5) || [];
 
-  const totalActions = highSeverityAlerts.length + topBuys.length + bigMoves.length + staleCards.length;
+  const totalActions =
+    highSeverityAlerts.length +
+    topBuys.length +
+    bigMoves.length +
+    staleCards.length +
+    pendingRecommendations.length;
 
   return (
     <div className="space-y-6">
@@ -168,6 +191,53 @@ export function MarketOverview({ alerts = [], onNavigate }: MarketOverviewProps)
                 />
                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
               </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ─── Pending Recommendations ─── */}
+      {pendingRecommendations.length > 0 && (
+        <section className="rounded-lg border border-border bg-bg-card shadow-sm">
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <div className="flex items-center gap-2">
+              <ShoppingCart className="h-4 w-4 text-buy" />
+              <h3 className="text-sm font-bold text-text-primary">Saved Recommendations</h3>
+              <span className="rounded-full bg-buy/10 px-2 py-0.5 text-[11px] font-bold text-buy">
+                {pendingRecommendations.length}
+              </span>
+            </div>
+            {onNavigate && (
+              <button onClick={() => onNavigate("/evaluate")} className="flex items-center gap-1 text-xs font-medium text-accent hover:text-accent-hover">
+                New lot <ChevronRight className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+          <div className="divide-y divide-border">
+            {pendingRecommendations.map((rec) => (
+              <div key={rec.id} className="flex items-center gap-3 px-4 py-3">
+                <button onClick={() => handleCardClick(rec.card_id)} className="min-w-0 flex-1 text-left">
+                  <p className="truncate text-sm font-semibold text-text-primary">{rec.card_name}</p>
+                  <p className="text-xs text-text-muted">
+                    {rec.grading_company} {rec.grade} · {rec.decision.replace(/_/g, " ")} · ${rec.offered_price.toFixed(0)} offer
+                  </p>
+                </button>
+                <TrustBadge variant={rec.confidence === "HIGH" ? "high-confidence" : rec.confidence === "LOW" ? "low-confidence" : "medium-confidence"} />
+                <button
+                  onClick={() => void handleRecommendationReview(rec.id, "approved")}
+                  className="rounded-md bg-buy/10 p-2 text-buy hover:bg-buy/20"
+                  aria-label="Approve recommendation"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={() => void handleRecommendationReview(rec.id, "rejected")}
+                  className="rounded-md bg-sell/10 p-2 text-sell hover:bg-sell/20"
+                  aria-label="Reject recommendation"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
             ))}
           </div>
         </section>

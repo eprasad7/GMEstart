@@ -16,6 +16,9 @@ export interface Env {
   // Workers AI
   AI: Ai;
 
+  // Browser Rendering (headless Chrome for scraping)
+  BROWSER: Fetcher;
+
   // Environment variables
   ENVIRONMENT: string;
 
@@ -27,12 +30,16 @@ export interface Env {
   REDDIT_CLIENT_SECRET: string;
   POKEMON_PRICE_TRACKER_KEY: string;
   API_KEY: string;
+  SELLER_HASH_SALT?: string;
 
   // Durable Object bindings (Agents)
   PriceMonitorAgent: DurableObjectNamespace;
   MarketIntelligenceAgent: DurableObjectNamespace;
   CompetitorTrackerAgent: DurableObjectNamespace;
   PricingRecommendationAgent: DurableObjectNamespace;
+
+  // Non-secret config
+  ALLOWED_ORIGINS?: string;
 }
 
 // ─── Domain Types ───
@@ -154,6 +161,11 @@ export interface PriceResponse {
   trend: "rising" | "stable" | "falling";
   updated_at: string | null;
   has_prediction: boolean;
+  experiment?: {
+    id: number;
+    name: string;
+    variant: "control" | "challenger";
+  };
 }
 
 export interface EvaluateRequest {

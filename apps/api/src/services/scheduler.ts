@@ -1,13 +1,14 @@
 import type { Env } from "../types";
 import { ingestSoldComps } from "./ingestion/soldcomps";
 import { ingestPriceCharting } from "./ingestion/pricecharting";
-import { ingestRedditSentiment } from "./ingestion/reddit";
+import { scrapeRedditSentiment } from "./ingestion/reddit-scraper";
 import { ingestPopulationReports } from "./ingestion/population";
 import { computeFeatures } from "./features";
 import { runAnomalyDetection } from "./anomaly";
 import { computeAggregates } from "./aggregates";
 import { batchPredict } from "./inference";
 import { rollUpSentiment } from "./sentiment-rollup";
+import { archiveOldObservations } from "./archive";
 
 // Cron Trigger handler — routes to the right ingestion job.
 //
@@ -20,6 +21,7 @@ import { rollUpSentiment } from "./sentiment-rollup";
 //   0 4 daily     → Anomaly detection (MUST run before features)
 //   0 5 daily     → Aggregates + feature computation
 //   0 6 daily     → Generate prices (batchPredict → model_predictions)
+//   0 1 Sunday    → Archive old observations to R2
 export async function handleScheduled(event: ScheduledEvent, env: Env): Promise<void> {
   const cron = event.cron;
 
@@ -33,6 +35,7 @@ export async function handleScheduled(event: ScheduledEvent, env: Env): Promise<
     "0 4 * * *": "anomaly",
     "0 5 * * *": "features",
     "0 6 * * *": "predictions",
+    "0 1 * * 0": "archive",
   };
 
   const source = cronSourceMap[cron];
@@ -49,7 +52,7 @@ export async function handleScheduled(event: ScheduledEvent, env: Env): Promise<
         break;
 
       case "*/5 * * * *":
-        count = await ingestRedditSentiment(env);
+        count = await scrapeRedditSentiment(env);
         break;
 
       case "0 * * * *":
@@ -79,6 +82,10 @@ export async function handleScheduled(event: ScheduledEvent, env: Env): Promise<
       case "0 6 * * *":
         // Predictions (after features are computed)
         count = await batchPredict(env);
+        break;
+
+      case "0 1 * * 0":
+        count = (await archiveOldObservations(env)).archived;
         break;
     }
 

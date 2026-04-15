@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, type EvaluateResponse, type Card } from "../lib/api";
+import { api, type EvaluateResponse, type Card, type BatchEvaluateResult, type BatchEvaluateInput } from "../lib/api";
 import { SearchBar } from "./SearchBar";
 import { TrustBadge, getConfidenceBadge } from "./TrustBadge";
 import { DollarSign, Loader2, Settings2, Calculator, Info, BookmarkPlus, Flag, Check } from "lucide-react";
@@ -26,6 +26,11 @@ export function EvaluateCard() {
   const [error, setError] = useState("");
   const [saved, setSaved] = useState<"saved" | "flagged" | null>(null);
   const [saving, setSaving] = useState(false);
+  const [batchInput, setBatchInput] = useState("");
+  const [batchResults, setBatchResults] = useState<BatchEvaluateResult[]>([]);
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchError, setBatchError] = useState("");
+  const [batchSavedKeys, setBatchSavedKeys] = useState<Set<string>>(new Set());
 
   const handleChannelChange = (ch: string) => {
     setChannel(ch);
@@ -81,6 +86,59 @@ export function EvaluateCard() {
       // Save failed — don't block the user
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleBatchEvaluate = async () => {
+    let items: BatchEvaluateInput[];
+    try {
+      items = parseBatchInput(batchInput);
+    } catch (err) {
+      setBatchError(err instanceof Error ? err.message : "Invalid batch input");
+      return;
+    }
+
+    setBatchLoading(true);
+    setBatchError("");
+    setBatchSavedKeys(new Set());
+    try {
+      const res = await api.evaluateBatch(items);
+      setBatchResults(res.results);
+    } catch (err) {
+      setBatchError(err instanceof Error ? err.message : "Batch evaluation failed");
+      setBatchResults([]);
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  const handleBatchFile = async (file: File | null) => {
+    if (!file) return;
+    setBatchInput(await file.text());
+  };
+
+  const handleBatchSave = async (row: BatchEvaluateResult, flagForReview: boolean) => {
+    if (row.error || !row.decision || row.fair_value == null || row.margin == null || !row.confidence) {
+      return;
+    }
+
+    const rowKey = getBatchRowKey(row);
+    try {
+      await api.saveRecommendation({
+        card_id: row.card_id,
+        grade: row.grade,
+        grading_company: row.grading_company,
+        decision: row.decision,
+        offered_price: row.offered_price || 0,
+        fair_value: row.fair_value,
+        margin: row.margin,
+        confidence: row.confidence,
+        channel,
+        notes: flagForReview ? "Flagged from batch lot review" : undefined,
+      });
+      setBatchSavedKeys((prev) => new Set(prev).add(rowKey));
+    } catch {
+      // Save failed — keep the row actionable
     }
   };
 
@@ -373,8 +431,167 @@ export function EvaluateCard() {
           </div>
         </div>
       )}
+
+      {/* ─── Batch Lot Evaluation ─── */}
+      <div className="rounded-lg border border-border bg-bg-card p-5 shadow-sm">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">Batch Lot Evaluation</h3>
+            <p className="mt-1 text-sm text-text-secondary">
+              Paste or upload `card_id, offered_price, grade, grading_company` rows to evaluate a whole lot at once.
+            </p>
+          </div>
+          <label className="rounded-md border border-border bg-bg-primary px-3 py-2 text-xs font-medium text-text-primary hover:bg-bg-hover min-h-[36px] cursor-pointer">
+            Upload CSV
+            <input
+              type="file"
+              accept=".csv,.tsv,.txt"
+              className="hidden"
+              onChange={(e) => void handleBatchFile(e.target.files?.[0] || null)}
+            />
+          </label>
+        </div>
+
+        <textarea
+          value={batchInput}
+          onChange={(e) => setBatchInput(e.target.value)}
+          rows={7}
+          placeholder={"card_id,offered_price,grade,grading_company\npokemon-123,225,10,PSA\nsports-456,80,RAW,RAW"}
+          className="w-full rounded-md border border-border bg-bg-primary px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus-visible:outline-2 focus-visible:outline-accent"
+        />
+
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button
+            onClick={handleBatchEvaluate}
+            disabled={batchLoading || !batchInput.trim()}
+            className="flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-bold text-text-inverse transition-colors hover:bg-accent-hover disabled:opacity-50 min-h-[44px]"
+          >
+            {batchLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Calculator className="h-4 w-4" />}
+            Evaluate Lot
+          </button>
+          <p className="text-[11px] text-text-muted">
+            Header row optional. If omitted, columns are read in that order.
+          </p>
+        </div>
+
+        {batchError && <p className="mt-3 text-sm text-danger">{batchError}</p>}
+
+        {batchResults.length > 0 && (
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="pb-2 pr-4 text-left text-xs font-semibold uppercase text-text-muted">Card</th>
+                  <th className="px-4 pb-2 text-right text-xs font-semibold uppercase text-text-muted">Decision</th>
+                  <th className="px-4 pb-2 text-right text-xs font-semibold uppercase text-text-muted">Fair</th>
+                  <th className="px-4 pb-2 text-right text-xs font-semibold uppercase text-text-muted">Max Buy</th>
+                  <th className="px-4 pb-2 text-right text-xs font-semibold uppercase text-text-muted">Confidence</th>
+                  <th className="pb-2 pl-4 text-right text-xs font-semibold uppercase text-text-muted">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {batchResults.map((row) => {
+                  const rowKey = getBatchRowKey(row);
+                  const isSaved = batchSavedKeys.has(rowKey);
+                  return (
+                    <tr key={rowKey} className="border-b border-border last:border-b-0">
+                      <td className="py-3 pr-4">
+                        <div className="min-w-[180px]">
+                          <p className="font-medium text-text-primary">{row.card_name || row.card_id}</p>
+                          <p className="text-xs text-text-muted">{row.grading_company} {row.grade}</p>
+                          {row.error && <p className="text-xs text-danger">{row.error}</p>}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {row.decision ? (
+                          <span className={`inline-flex rounded-md border px-2 py-1 text-xs font-bold ${decisionStyles[row.decision] || ""}`}>
+                            {row.decision.replace(/_/g, " ")}
+                          </span>
+                        ) : (
+                          <span className="text-text-muted">--</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-right text-text-primary">
+                        {row.fair_value != null ? `$${row.fair_value.toFixed(2)}` : "--"}
+                      </td>
+                      <td className="px-4 py-3 text-right text-buy">
+                        {row.max_buy_price != null ? `$${row.max_buy_price.toFixed(2)}` : "--"}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {row.confidence ? <TrustBadge variant={getConfidenceBadge(row.confidence)} /> : <span className="text-text-muted">--</span>}
+                      </td>
+                      <td className="py-3 pl-4 text-right">
+                        {isSaved ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-medium text-buy">
+                            <Check className="h-3.5 w-3.5" />
+                            Saved
+                          </span>
+                        ) : row.error ? null : (
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => void handleBatchSave(row, false)}
+                              className="rounded-md bg-buy/10 px-2.5 py-1.5 text-xs font-medium text-buy hover:bg-buy/20"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={() => void handleBatchSave(row, true)}
+                              className="rounded-md bg-hold/10 px-2.5 py-1.5 text-xs font-medium text-hold hover:bg-hold/20"
+                            >
+                              Review
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
+}
+
+function parseBatchInput(input: string): BatchEvaluateInput[] {
+  const lines = input
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (!lines.length) {
+    throw new Error("Paste at least one row to evaluate.");
+  }
+
+  const rows = lines[0].toLowerCase().includes("card_id") ? lines.slice(1) : lines;
+  const items = rows.map((line) => {
+    const parts = line.split(/\t|,/).map((part) => part.trim());
+    const [cardId, offeredPriceRaw, grade = "RAW", gradingCompany = "RAW"] = parts;
+    const offeredPrice = parseFloat(offeredPriceRaw);
+
+    if (!cardId || !offeredPriceRaw || Number.isNaN(offeredPrice) || offeredPrice <= 0) {
+      throw new Error(`Invalid row: "${line}"`);
+    }
+
+    return {
+      card_id: cardId,
+      offered_price: offeredPrice,
+      grade,
+      grading_company: gradingCompany,
+    };
+  });
+
+  if (!items.length) {
+    throw new Error("No valid rows found in pasted lot.");
+  }
+
+  return items;
+}
+
+function getBatchRowKey(row: BatchEvaluateResult): string {
+  return `${row.card_id}:${row.grading_company}:${row.grade}`;
 }
 
 function ScenarioCell({ label, value, sub, variant = "default" }: {

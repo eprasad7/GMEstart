@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { Env, PriceResponse } from "../types";
+import { resolveExperimentAssignment } from "../services/experiments";
 
 export const priceRoutes = new Hono<{ Bindings: Env }>();
 
@@ -78,25 +79,49 @@ priceRoutes.get("/:cardId", async (c) => {
           : "stable"
       : "stable";
 
-  const hasPrediction = !!prediction;
-  const fairValue = (prediction?.fair_value as number) || ma30d;
+  const assignmentKey =
+    c.req.header("X-API-Key") ||
+    c.req.header("CF-Connecting-IP") ||
+    `${cardId}:${gradingCompany}:${grade}`;
+  const experimentAssignment = await resolveExperimentAssignment(
+    c.env,
+    assignmentKey,
+    cardId,
+    gradingCompany,
+    grade
+  );
+  const activePrediction = experimentAssignment?.variant === "challenger" && experimentAssignment.prediction
+    ? experimentAssignment.prediction
+    : null;
+  const hasPrediction = !!(prediction || activePrediction);
+  const fairValue = activePrediction?.fair_value || (prediction?.fair_value as number) || ma30d;
 
   const response: PriceResponse = {
     card_id: cardId,
     card_name: (card?.name as string) || cardId,
     grade,
     grading_company: gradingCompany,
-    price: fairValue,
-    lower: (prediction?.p10 as number) || ma30d * 0.8,
-    upper: (prediction?.p90 as number) || ma30d * 1.2,
-    buy_threshold: (prediction?.buy_threshold as number) || 0,
-    sell_threshold: (prediction?.sell_threshold as number) || 0,
-    confidence: (prediction?.confidence as "HIGH" | "MEDIUM" | "LOW") || "LOW",
+    price: activePrediction?.fair_value || fairValue,
+    lower: activePrediction?.p10 || (prediction?.p10 as number) || ma30d * 0.8,
+    upper: activePrediction?.p90 || (prediction?.p90 as number) || ma30d * 1.2,
+    buy_threshold: activePrediction?.buy_threshold || (prediction?.buy_threshold as number) || 0,
+    sell_threshold: activePrediction?.sell_threshold || (prediction?.sell_threshold as number) || 0,
+    confidence:
+      activePrediction?.confidence ||
+      (prediction?.confidence as "HIGH" | "MEDIUM" | "LOW") ||
+      "LOW",
     last_sale: (salesStats?.last_sale as string) || null,
     sales_30d: (salesStats?.sales_30d as number) || 0,
     trend: trend as "rising" | "stable" | "falling",
     updated_at: (prediction?.predicted_at as string) || null,
     has_prediction: hasPrediction,
+    experiment: experimentAssignment
+      ? {
+          id: experimentAssignment.experiment.id,
+          name: experimentAssignment.experiment.name,
+          variant: experimentAssignment.variant,
+        }
+      : undefined,
   };
 
   // Cache for 5 minutes
@@ -134,7 +159,7 @@ priceRoutes.get("/:cardId/evidence", async (c) => {
   const grade = c.req.query("grade") || "RAW";
   const gradingCompany = c.req.query("grading_company") || "RAW";
 
-  const [sourceMix, anomalies, population] = await Promise.all([
+  const [sourceMix, anomalies, population, internalMetrics] = await Promise.all([
     c.env.DB.prepare(
       `SELECT source, COUNT(*) as count, AVG(price_usd) as avg_price
        FROM price_observations
@@ -157,6 +182,13 @@ priceRoutes.get("/:cardId/evidence", async (c) => {
        WHERE card_id = ? AND grading_company = ? AND grade = ?
        ORDER BY snapshot_date DESC LIMIT 1`
     ).bind(cardId, gradingCompany, grade).first(),
+
+    c.env.DB.prepare(
+      `SELECT snapshot_date, trade_in_count, avg_trade_in_price, inventory_units, store_views, foot_traffic_index
+       FROM gamestop_internal_metrics
+       WHERE card_id = ?
+       ORDER BY snapshot_date DESC LIMIT 1`
+    ).bind(cardId).first(),
   ]);
 
   return c.json({
@@ -178,5 +210,15 @@ priceRoutes.get("/:cardId/evidence", async (c) => {
       total: population.total_population,
       snapshot_date: population.snapshot_date,
     } : null,
+    internal: internalMetrics
+      ? {
+          snapshot_date: internalMetrics.snapshot_date,
+          trade_in_count: internalMetrics.trade_in_count,
+          avg_trade_in_price: internalMetrics.avg_trade_in_price,
+          inventory_units: internalMetrics.inventory_units,
+          store_views: internalMetrics.store_views,
+          foot_traffic_index: internalMetrics.foot_traffic_index,
+        }
+      : null,
   });
 });

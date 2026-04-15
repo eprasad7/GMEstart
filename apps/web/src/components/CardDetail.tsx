@@ -271,6 +271,14 @@ export function CardDetail({ card, onBack }: CardDetailProps) {
                 signal={evidence.population.count < 50 ? "up" : "neutral"}
               />
             )}
+            {evidence?.internal && (
+              <ExplainerRow
+                label="Store Demand"
+                value={`${evidence.internal.trade_in_count} trade-ins, ${evidence.internal.store_views} views`}
+                detail={`Inventory ${evidence.internal.inventory_units}, foot traffic index ${evidence.internal.foot_traffic_index.toFixed(1)} (${new Date(evidence.internal.snapshot_date).toLocaleDateString()})`}
+                signal={evidence.internal.foot_traffic_index >= 1 ? "up" : "neutral"}
+              />
+            )}
             {sentiment && (
               <>
                 <ExplainerRow

@@ -80,6 +80,13 @@ interface CardFeatures {
   social_mention_count_7d: number;
   social_mention_trend: number;
 
+  // GameStop internal data moat
+  internal_trade_in_count: number;
+  internal_avg_trade_in_price: number;
+  internal_inventory_units: number;
+  internal_store_views: number;
+  internal_foot_traffic_index: number;
+
   // Seasonality
   month_sin: number;
   month_cos: number;
@@ -100,7 +107,7 @@ async function computeCardFeatures(
   const gradeNumeric = grade === "RAW" ? null : parseFloat(grade);
 
   // Parallel queries for all feature components
-  const [salesStats, popData, sentimentData, priceHistory, popGrowth, sentimentTrend] = await Promise.all([
+  const [salesStats, popData, sentimentData, priceHistory, popGrowth, sentimentTrend, internalMetrics] = await Promise.all([
     // Sales velocity at different windows
     env.DB.prepare(
       `SELECT
@@ -178,6 +185,15 @@ async function computeCardFeatures(
     )
       .bind(cardId, cardId, cardId, cardId)
       .first(),
+
+    env.DB.prepare(
+      `SELECT trade_in_count, avg_trade_in_price, inventory_units, store_views, foot_traffic_index
+       FROM gamestop_internal_metrics
+       WHERE card_id = ?
+       ORDER BY snapshot_date DESC LIMIT 1`
+    )
+      .bind(cardId)
+      .first(),
   ]);
 
   // Compute derived features
@@ -252,6 +268,11 @@ async function computeCardFeatures(
       const normalized30d = m30d / 4.3;
       return normalized30d > 0 ? Math.round((m7d / normalized30d) * 100) / 100 : 0;
     })(),
+    internal_trade_in_count: (internalMetrics?.trade_in_count as number) || 0,
+    internal_avg_trade_in_price: Math.round((((internalMetrics?.avg_trade_in_price as number) || 0) * 100)) / 100,
+    internal_inventory_units: (internalMetrics?.inventory_units as number) || 0,
+    internal_store_views: (internalMetrics?.store_views as number) || 0,
+    internal_foot_traffic_index: Math.round((((internalMetrics?.foot_traffic_index as number) || 0) * 100)) / 100,
 
     month_sin: Math.round(Math.sin(monthRad) * 1000) / 1000,
     month_cos: Math.round(Math.cos(monthRad) * 1000) / 1000,

@@ -57,6 +57,11 @@ export interface PriceResponse {
   trend: "rising" | "stable" | "falling";
   updated_at: string | null;
   has_prediction: boolean;
+  experiment?: {
+    id: number;
+    name: string;
+    variant: "control" | "challenger";
+  };
 }
 
 export interface Card {
@@ -136,6 +141,14 @@ export interface PriceEvidence {
   sources: Array<{ source: string; count: number; avg_price: number }>;
   anomalies: { excluded_count: number; avg_anomaly_price: number | null };
   population: { count: number; higher_grades: number; total: number; snapshot_date: string } | null;
+  internal: {
+    snapshot_date: string;
+    trade_in_count: number;
+    avg_trade_in_price: number;
+    inventory_units: number;
+    store_views: number;
+    foot_traffic_index: number;
+  } | null;
 }
 
 export interface Recommendation {
@@ -152,7 +165,32 @@ export interface Recommendation {
   channel: string | null;
   notes: string | null;
   status: string;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
   created_at: string;
+}
+
+export interface BatchEvaluateInput {
+  card_id: string;
+  offered_price: number;
+  grade?: string;
+  grading_company?: string;
+}
+
+export interface BatchEvaluateResult {
+  card_id: string;
+  card_name?: string;
+  offered_price?: number;
+  grade: string;
+  grading_company: string;
+  decision?: EvaluateResponse["decision"];
+  fair_value?: number;
+  margin?: number;
+  confidence?: EvaluateResponse["confidence"];
+  reasoning?: string;
+  max_buy_price?: number;
+  sell_threshold?: number | null;
+  error?: string;
 }
 
 export interface MarketIndex {
@@ -225,6 +263,12 @@ export const api = {
       }),
     }),
 
+  evaluateBatch: (items: BatchEvaluateInput[]) =>
+    fetchApi<{ results: BatchEvaluateResult[] }>("/evaluate/batch", {
+      method: "POST",
+      body: JSON.stringify({ items }),
+    }),
+
   // Alerts
   getAlerts: () =>
     fetchApi<{ alerts: Alert[] }>("/alerts/active"),
@@ -257,6 +301,12 @@ export const api = {
 
   getRecommendations: (status = "pending") =>
     fetchApi<{ recommendations: Recommendation[] }>(`/evaluate/recommendations?status=${status}`),
+
+  reviewRecommendation: (id: number, status: "approved" | "rejected" | "expired") =>
+    fetchApi<{ status: string }>(`/evaluate/recommendations/${id}/review`, {
+      method: "POST",
+      body: JSON.stringify({ status }),
+    }),
 
   // Price evidence
   getPriceEvidence: (cardId: string, grade?: string, gradingCompany?: string) => {

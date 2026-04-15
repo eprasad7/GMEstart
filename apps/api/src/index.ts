@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { routeAgentRequest } from "agents";
 import type { Env } from "./types";
@@ -15,6 +14,8 @@ import { systemRoutes } from "./routes/system";
 import { handleScheduled } from "./services/scheduler";
 import { handleIngestionQueue, handleSentimentQueue } from "./services/queue-consumer";
 import { apiKeyAuth, rateLimiter } from "./middleware/auth";
+import { logEvent } from "./lib/logging";
+import { secureCompareStrings } from "./lib/security";
 
 // Export agent classes (required for Durable Object bindings)
 export { PriceMonitorAgent } from "./agents/price-monitor";
@@ -24,8 +25,67 @@ export { PricingRecommendationAgent } from "./agents/pricing-recommendation";
 
 const app = new Hono<{ Bindings: Env }>();
 
+function getAllowedOrigins(env: Env): Set<string> {
+  const configured = env.ALLOWED_ORIGINS
+    ?.split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  if (configured?.length) {
+    return new Set(configured);
+  }
+
+  if (env.ENVIRONMENT === "development") {
+    return new Set(["http://localhost:5173", "http://127.0.0.1:5173"]);
+  }
+
+  return new Set(["https://dashboard.gamestop.com", "https://gamecards.gamestop.com"]);
+}
+
+function corsHeaders(origin: string): Record<string, string> {
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type,X-API-Key",
+    "Access-Control-Max-Age": "86400",
+    Vary: "Origin",
+  };
+}
+
 // Middleware
-app.use("*", cors());
+app.use("*", async (c, next) => {
+  const origin = c.req.header("Origin");
+  const allowedOrigins = getAllowedOrigins(c.env);
+  const allowedOrigin = origin && allowedOrigins.has(origin) ? origin : null;
+
+  if (c.req.method === "OPTIONS") {
+    if (origin && !allowedOrigin && c.env.ENVIRONMENT !== "development") {
+      return new Response(JSON.stringify({ error: "Origin not allowed" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json", Vary: "Origin" },
+      });
+    }
+
+    return new Response(null, {
+      status: 204,
+      headers: allowedOrigin ? corsHeaders(allowedOrigin) : { Vary: "Origin" },
+    });
+  }
+
+  if (origin && !allowedOrigin && c.env.ENVIRONMENT !== "development") {
+    return c.json({ error: "Origin not allowed" }, 403);
+  }
+
+  await next();
+
+  if (allowedOrigin) {
+    for (const [key, value] of Object.entries(corsHeaders(allowedOrigin))) {
+      c.header(key, value);
+    }
+  } else if (origin) {
+    c.header("Vary", "Origin");
+  }
+});
 app.use("*", logger());
 app.use("/v1/*", apiKeyAuth);
 app.use("/v1/*", rateLimiter);
@@ -73,7 +133,8 @@ export default {
     if (url.pathname.startsWith("/agents/") && env.ENVIRONMENT !== "development") {
       if (request.method !== "OPTIONS") {
         const apiKey = request.headers.get("X-API-Key");
-        if (!apiKey || apiKey !== env.API_KEY) {
+        const isValid = apiKey ? await secureCompareStrings(apiKey, env.API_KEY) : false;
+        if (!isValid) {
           return new Response(JSON.stringify({ error: "Unauthorized" }), {
             status: apiKey ? 403 : 401,
             headers: { "Content-Type": "application/json" },
@@ -103,7 +164,10 @@ export default {
     } else if (queueName === "gamecards-sentiment") {
       await handleSentimentQueue(batch, env);
     } else {
-      console.error(`Unknown queue: ${queueName}. Acking ${batch.messages.length} messages to prevent retry loop.`);
+      logEvent("error", "unknown_queue_received", {
+        queueName,
+        messageCount: batch.messages.length,
+      });
       batch.ackAll();
     }
   },

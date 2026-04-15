@@ -16,6 +16,7 @@
     "hono": "^4.7.0"
   },
   "devDependencies": {
+    "@cloudflare/puppeteer": "^1.1.0",
     "@cloudflare/workers-types": "^4.20250410.0",
     "typescript": "^5.8.0",
     "vitest": "^4.1.4",

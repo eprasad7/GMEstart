@@ -1,5 +1,6 @@
 import { createMiddleware } from "hono/factory";
 import type { Env } from "../types";
+import { secureCompareStrings } from "../lib/security";
 
 /**
  * API key authentication middleware.
@@ -25,7 +26,8 @@ export const apiKeyAuth = createMiddleware<{ Bindings: Env }>(async (c, next) =>
     return c.json({ error: "Missing X-API-Key header" }, 401);
   }
 
-  if (apiKey !== c.env.API_KEY) {
+  const isValid = await secureCompareStrings(apiKey, c.env.API_KEY);
+  if (!isValid) {
     return c.json({ error: "Invalid API key" }, 403);
   }
 

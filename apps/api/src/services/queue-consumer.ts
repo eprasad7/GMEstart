@@ -1,4 +1,6 @@
 import type { Env } from "../types";
+import { logEvent } from "../lib/logging";
+import { hashSellerId } from "../lib/security";
 
 interface IngestionMessage {
   type: "price_observation";
@@ -67,6 +69,10 @@ export async function handleIngestionQueue(
       adjustedPrice = data.price_usd * 0.80;
     }
 
+    const hashedSellerId = data.seller_id
+      ? await hashSellerId(data.seller_id, env.SELLER_HASH_SALT || env.API_KEY)
+      : null;
+
     inserts.push(
       stmt.bind(
         data.card_id,
@@ -78,7 +84,7 @@ export async function handleIngestionQueue(
         data.grade_numeric,
         data.sale_type,
         data.listing_url,
-        data.seller_id,
+        hashedSellerId,
         data.bid_count
       )
     );
@@ -103,7 +109,10 @@ export async function handleIngestionQueue(
       }
     } catch (err) {
       // Don't ack — messages will be retried
-      console.error("Ingestion batch insert failed:", err);
+      logEvent("error", "ingestion_batch_insert_failed", {
+        error: err instanceof Error ? err.message : String(err),
+        batchSize: chunk.length,
+      });
     }
   }
 }

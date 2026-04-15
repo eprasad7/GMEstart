@@ -1,4 +1,5 @@
 import type { Env } from "../types";
+import { recordModelMonitoringSnapshot } from "./model-monitoring";
 
 /**
  * ML inference service.
@@ -210,6 +211,20 @@ export async function batchPredict(env: Env): Promise<number> {
     `DELETE FROM model_predictions WHERE predicted_at < datetime('now', '-7 days')`
   ).bind().run();
 
+  const previousPredictions = await env.DB.prepare(
+    `SELECT card_id, grade, grading_company, fair_value
+     FROM model_predictions`
+  )
+    .bind()
+    .all();
+  const previousMap = new Map<string, number>();
+  for (const row of previousPredictions.results) {
+    previousMap.set(
+      predictionKey(row.card_id as string, row.grading_company as string, row.grade as string),
+      (row.fair_value as number) || 0
+    );
+  }
+
   // Load ALL features in one query (avoid per-card D1 reads on fallback path)
   const featureRows = await env.DB.prepare(
     `SELECT card_id, grade, grading_company, features FROM feature_store`
@@ -222,6 +237,9 @@ export async function batchPredict(env: Env): Promise<number> {
 
   const BATCH_SIZE = 50;
   let count = 0;
+  let changedCount = 0;
+  let comparedCount = 0;
+  let currentModelVersion = "statistical-v1";
   const stmts: D1PreparedStatement[] = [];
   const keysToInvalidate: string[] = [];
 
@@ -246,6 +264,16 @@ export async function batchPredict(env: Env): Promise<number> {
       prediction = statisticalEstimation(features);
     }
     if (!prediction || prediction.fair_value === 0) continue;
+    currentModelVersion = prediction.model_version || currentModelVersion;
+
+    const previousFairValue = previousMap.get(predictionKey(cardId, gradingCompany, grade));
+    if (previousFairValue && previousFairValue > 0) {
+      comparedCount++;
+      const delta = Math.abs((prediction.fair_value - previousFairValue) / previousFairValue);
+      if (delta >= 0.2) {
+        changedCount++;
+      }
+    }
 
     stmts.push(
       env.DB.prepare(
@@ -289,6 +317,12 @@ export async function batchPredict(env: Env): Promise<number> {
   for (const key of keysToInvalidate) {
     await env.PRICE_CACHE.delete(key);
   }
+
+  await recordModelMonitoringSnapshot(env, {
+    changedCount,
+    comparedCount,
+    modelVersion: currentModelVersion,
+  });
 
   return count;
 }

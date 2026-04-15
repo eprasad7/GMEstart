@@ -8,6 +8,7 @@ import { describe, it, expect } from "vitest";
 const cronSourceMap: Record<string, string> = {
   "*/15 * * * *": "soldcomps",
   "*/5 * * * *": "reddit",
+  "0 1 * * 0": "archive",
   "0 * * * *": "sentiment_rollup",
   "0 2 * * *": "pricecharting",
   "0 3 * * *": "population",
@@ -26,11 +27,15 @@ const requiredOrder = [
 describe("Scheduler pipeline", () => {
   it("maps every cron to a named source", () => {
     const crons = Object.keys(cronSourceMap);
-    expect(crons.length).toBe(8);
+    expect(crons.length).toBe(9);
     for (const source of Object.values(cronSourceMap)) {
       expect(typeof source).toBe("string");
       expect(source.length).toBeGreaterThan(0);
     }
+  });
+
+  it("includes weekly archival", () => {
+    expect(cronSourceMap["0 1 * * 0"]).toBe("archive");
   });
 
   it("anomaly runs before features", () => {

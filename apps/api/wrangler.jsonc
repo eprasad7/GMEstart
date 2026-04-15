@@ -1,8 +1,18 @@
 {
   "name": "gamecards-api",
   "main": "src/index.ts",
-  "compatibility_date": "2025-04-01",
+  "compatibility_date": "2026-04-15",
   "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.05
+    }
+  },
 
   // D1 Database
   "d1_databases": [
@@ -82,6 +92,7 @@
     "crons": [
       "*/15 * * * *",
       "*/5 * * * *",
+      "0 1 * * 0",
       "0 * * * *",
       "0 2 * * *",
       "0 3 * * *",
@@ -91,6 +102,11 @@
     ]
   },
 
+  // Browser Rendering — headless Chrome for scraping
+  "browser": {
+    "binding": "BROWSER"
+  },
+
   // Workers AI
   "ai": {
     "binding": "AI"
@@ -98,7 +114,8 @@
 
   // Default vars (development)
   "vars": {
-    "ENVIRONMENT": "development"
+    "ENVIRONMENT": "development",
+    "ALLOWED_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173"
   },
 
   // ─── Production environment ───
@@ -107,7 +124,8 @@
   "env": {
     "production": {
       "vars": {
-        "ENVIRONMENT": "production"
+        "ENVIRONMENT": "production",
+        "ALLOWED_ORIGINS": "https://dashboard.gamestop.com,https://gamecards.gamestop.com"
       }
       // To add a custom domain, uncomment and replace:
       // "routes": [{ "pattern": "api.yourdomain.com", "custom_domain": true }]
