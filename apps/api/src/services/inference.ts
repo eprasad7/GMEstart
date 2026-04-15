@@ -206,9 +206,10 @@ function round2(n: number): number {
  * Writes to model_predictions that the serving layer reads.
  */
 export async function batchPredict(env: Env): Promise<number> {
-  // Prune predictions older than 7 days to prevent unbounded growth
+  // Prune only STATISTICAL predictions older than 7 days.
+  // Keep ML model predictions (lgbm-*) until explicitly replaced.
   await env.DB.prepare(
-    `DELETE FROM model_predictions WHERE predicted_at < datetime('now', '-7 days')`
+    `DELETE FROM model_predictions WHERE predicted_at < datetime('now', '-7 days') AND model_version = 'statistical-v1'`
   ).bind().run();
 
   const previousPredictions = await env.DB.prepare(
@@ -248,10 +249,25 @@ export async function batchPredict(env: Env): Promise<number> {
     const grade = row.grade as string;
     const gradingCompany = row.grading_company as string;
 
+    const key = predictionKey(cardId, gradingCompany, grade);
+
+    // Skip cards that already have a trained ML model prediction in D1.
+    // Only overwrite statistical-v1 predictions, never lgbm-* predictions.
+    const existingVersion = previousMap.get(key);
+    if (existingVersion && !key.startsWith("statistical")) {
+      // Check if this card already has a non-statistical prediction
+      const existingPred = await env.DB.prepare(
+        `SELECT model_version FROM model_predictions WHERE card_id = ? AND grade = ? AND grading_company = ? AND model_version != 'statistical-v1' LIMIT 1`
+      ).bind(cardId, grade, gradingCompany).first();
+      if (existingPred) {
+        count++; // Count as processed but don't overwrite
+        continue;
+      }
+    }
+
     // Check R2 batch predictions first (already cached in memory)
     let prediction: PredictionResult | null = null;
     if (batch) {
-      const key = predictionKey(cardId, gradingCompany, grade);
       const bp = batch.get(key);
       if (bp) {
         prediction = { ...bp };

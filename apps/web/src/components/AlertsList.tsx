@@ -357,6 +357,31 @@ function AlertRow({ alert, onResolve, onCardClick, openMenuId, setOpenMenuId, on
           <span className="hidden sm:inline">Resolve</span>
         </button>
       </div>
+      </div>
+
+      {/* Mobile action row */}
+      <div className="mt-2 flex gap-2 pl-7 sm:hidden">
+        <button
+          onClick={() => onResolve(alert.id)}
+          className="flex items-center gap-1 rounded-lg bg-buy/10 px-2.5 py-1.5 text-xs font-medium text-buy min-h-[36px]"
+        >
+          <X className="h-3 w-3" /> Resolve
+        </button>
+        <button
+          onClick={() => setOpenMenuId(isSnoozeOpen ? null : { id: alert.id, type: "snooze" })}
+          className="flex items-center gap-1 rounded-lg bg-bg-secondary px-2.5 py-1.5 text-xs font-medium text-text-secondary min-h-[36px]"
+        >
+          <Clock className="h-3 w-3" /> Snooze
+        </button>
+        {onCardClick && (
+          <button
+            onClick={() => onCardClick(alert.card_id)}
+            className="flex items-center gap-1 rounded-lg bg-bg-secondary px-2.5 py-1.5 text-xs font-medium text-text-secondary min-h-[36px]"
+          >
+            <ChevronRight className="h-3 w-3" /> View
+          </button>
+        )}
+      </div>
     </div>
   );
 }
