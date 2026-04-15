@@ -2,10 +2,12 @@ import { useState, useMemo } from "react";
 import { AlertTriangle, TrendingUp, TrendingDown, Zap, Eye, X, Clock, ChevronRight, Filter } from "lucide-react";
 import { TrustBadge } from "./TrustBadge";
 import type { Alert } from "../lib/api";
+import { api } from "../lib/api";
 
 interface AlertsListProps {
   alerts: Alert[];
   onResolve: (id: number) => void;
+  onRefresh?: () => void;
   onCardClick?: (cardId: string) => void;
   showControls?: boolean;
 }
@@ -23,9 +25,10 @@ const alertIcons: Record<string, React.ReactNode> = {
 };
 
 const SNOOZE_OPTIONS = [
-  { label: "1h", ms: 60 * 60 * 1000 },
-  { label: "4h", ms: 4 * 60 * 60 * 1000 },
-  { label: "24h", ms: 24 * 60 * 60 * 1000 },
+  { label: "1h", minutes: 60 },
+  { label: "4h", minutes: 240 },
+  { label: "24h", minutes: 1440 },
+  { label: "7d", minutes: 10080 },
 ];
 
 function getSeverity(alert: Alert): "critical" | "warning" | "info" {
@@ -41,22 +44,41 @@ const severityStyles = {
   info: { badge: "bg-info/10 text-info border-info/20", dot: "bg-info", label: "Info" },
 };
 
-export function AlertsList({ alerts, onResolve, onCardClick, showControls = true }: AlertsListProps) {
+export function AlertsList({ alerts, onResolve, onRefresh, onCardClick, showControls = true }: AlertsListProps) {
   const [sortMode, setSortMode] = useState<SortMode>("severity");
   const [filterType, setFilterType] = useState<FilterType>("all");
-  const [snoozedIds, setSnoozedIds] = useState<Map<number, number>>(new Map());
   const [snoozeMenuId, setSnoozeMenuId] = useState<number | null>(null);
+  const [pendingAction, setPendingAction] = useState<number | null>(null);
 
-  const handleSnooze = (alertId: number, durationMs: number) => {
-    setSnoozedIds((prev) => new Map(prev).set(alertId, Date.now() + durationMs));
+  const handleSnooze = async (alertId: number, durationMinutes: number) => {
+    setPendingAction(alertId);
     setSnoozeMenuId(null);
+    try {
+      await api.snoozeAlert(alertId, durationMinutes);
+      onRefresh?.();
+    } catch {
+      // Snooze failed — alert stays visible
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const handleAssign = async (alertId: number) => {
+    const name = prompt("Assign to:");
+    if (!name) return;
+    setPendingAction(alertId);
+    try {
+      await api.assignAlert(alertId, name);
+      onRefresh?.();
+    } catch {
+      // Assign failed
+    } finally {
+      setPendingAction(null);
+    }
   };
 
   const visibleAlerts = useMemo(() => {
-    const now = Date.now();
     let filtered = alerts.filter((a) => {
-      const snoozedUntil = snoozedIds.get(a.id);
-      if (snoozedUntil && now < snoozedUntil) return false;
       if (filterType !== "all" && a.alert_type !== filterType) return false;
       return true;
     });
@@ -70,14 +92,11 @@ export function AlertsList({ alerts, onResolve, onCardClick, showControls = true
       if (sortMode === "newest") {
         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
       }
-      // type
       return a.alert_type.localeCompare(b.alert_type);
     });
 
     return filtered;
-  }, [alerts, sortMode, filterType, snoozedIds]);
-
-  const snoozedCount = alerts.length - visibleAlerts.length - (filterType !== "all" ? alerts.filter((a) => a.alert_type !== filterType).length : 0);
+  }, [alerts, sortMode, filterType]);
 
   if (alerts.length === 0) {
     return (
@@ -88,7 +107,6 @@ export function AlertsList({ alerts, onResolve, onCardClick, showControls = true
     );
   }
 
-  // Group by severity for display
   const grouped = {
     critical: visibleAlerts.filter((a) => getSeverity(a) === "critical"),
     warning: visibleAlerts.filter((a) => getSeverity(a) === "warning"),
@@ -97,10 +115,8 @@ export function AlertsList({ alerts, onResolve, onCardClick, showControls = true
 
   return (
     <div className="space-y-4">
-      {/* Controls */}
       {showControls && (
         <div className="flex flex-wrap items-center gap-2">
-          {/* Sort */}
           <div className="flex items-center gap-1 rounded-md bg-bg-secondary p-0.5">
             {(["severity", "newest", "type"] as SortMode[]).map((mode) => (
               <button
@@ -115,7 +131,6 @@ export function AlertsList({ alerts, onResolve, onCardClick, showControls = true
             ))}
           </div>
 
-          {/* Filter */}
           <div className="flex items-center gap-1.5">
             <Filter className="h-3.5 w-3.5 text-text-muted" />
             <select
@@ -133,7 +148,6 @@ export function AlertsList({ alerts, onResolve, onCardClick, showControls = true
             </select>
           </div>
 
-          {/* Summary badges */}
           <div className="ml-auto flex items-center gap-2 text-xs text-text-muted">
             {grouped.critical.length > 0 && (
               <span className="flex items-center gap-1">
@@ -147,27 +161,20 @@ export function AlertsList({ alerts, onResolve, onCardClick, showControls = true
                 {grouped.warning.length} warning
               </span>
             )}
-            {snoozedCount > 0 && (
-              <span className="flex items-center gap-1 text-text-muted">
-                <Clock className="h-3 w-3" />
-                {snoozedCount} snoozed
-              </span>
-            )}
           </div>
         </div>
       )}
 
-      {/* Alert Groups */}
       {sortMode === "severity" ? (
         <>
           {grouped.critical.length > 0 && (
-            <AlertGroup severity="critical" alerts={grouped.critical} onResolve={onResolve} onCardClick={onCardClick} snoozeMenuId={snoozeMenuId} setSnoozeMenuId={setSnoozeMenuId} onSnooze={handleSnooze} />
+            <AlertGroup severity="critical" alerts={grouped.critical} onResolve={onResolve} onCardClick={onCardClick} snoozeMenuId={snoozeMenuId} setSnoozeMenuId={setSnoozeMenuId} onSnooze={handleSnooze} onAssign={handleAssign} pendingAction={pendingAction} />
           )}
           {grouped.warning.length > 0 && (
-            <AlertGroup severity="warning" alerts={grouped.warning} onResolve={onResolve} onCardClick={onCardClick} snoozeMenuId={snoozeMenuId} setSnoozeMenuId={setSnoozeMenuId} onSnooze={handleSnooze} />
+            <AlertGroup severity="warning" alerts={grouped.warning} onResolve={onResolve} onCardClick={onCardClick} snoozeMenuId={snoozeMenuId} setSnoozeMenuId={setSnoozeMenuId} onSnooze={handleSnooze} onAssign={handleAssign} pendingAction={pendingAction} />
           )}
           {grouped.info.length > 0 && (
-            <AlertGroup severity="info" alerts={grouped.info} onResolve={onResolve} onCardClick={onCardClick} snoozeMenuId={snoozeMenuId} setSnoozeMenuId={setSnoozeMenuId} onSnooze={handleSnooze} />
+            <AlertGroup severity="info" alerts={grouped.info} onResolve={onResolve} onCardClick={onCardClick} snoozeMenuId={snoozeMenuId} setSnoozeMenuId={setSnoozeMenuId} onSnooze={handleSnooze} onAssign={handleAssign} pendingAction={pendingAction} />
           )}
         </>
       ) : (
@@ -182,6 +189,8 @@ export function AlertsList({ alerts, onResolve, onCardClick, showControls = true
               snoozeMenuId={snoozeMenuId}
               setSnoozeMenuId={setSnoozeMenuId}
               onSnooze={handleSnooze}
+              onAssign={handleAssign}
+              pendingAction={pendingAction}
             />
           ))}
         </div>
@@ -189,21 +198,23 @@ export function AlertsList({ alerts, onResolve, onCardClick, showControls = true
 
       {visibleAlerts.length === 0 && alerts.length > 0 && (
         <div className="flex h-20 items-center justify-center rounded-lg border border-border bg-bg-card text-sm text-text-muted">
-          All alerts filtered or snoozed
+          All alerts filtered
         </div>
       )}
     </div>
   );
 }
 
-function AlertGroup({ severity, alerts, onResolve, onCardClick, snoozeMenuId, setSnoozeMenuId, onSnooze }: {
+function AlertGroup({ severity, alerts, onResolve, onCardClick, snoozeMenuId, setSnoozeMenuId, onSnooze, onAssign, pendingAction }: {
   severity: "critical" | "warning" | "info";
   alerts: Alert[];
   onResolve: (id: number) => void;
   onCardClick?: (cardId: string) => void;
   snoozeMenuId: number | null;
   setSnoozeMenuId: (id: number | null) => void;
-  onSnooze: (id: number, ms: number) => void;
+  onSnooze: (id: number, minutes: number) => void;
+  onAssign: (id: number) => void;
+  pendingAction: number | null;
 }) {
   const style = severityStyles[severity];
   return (
@@ -225,27 +236,32 @@ function AlertGroup({ severity, alerts, onResolve, onCardClick, snoozeMenuId, se
           snoozeMenuId={snoozeMenuId}
           setSnoozeMenuId={setSnoozeMenuId}
           onSnooze={onSnooze}
+          onAssign={onAssign}
+          pendingAction={pendingAction}
         />
       ))}
     </div>
   );
 }
 
-function AlertRow({ alert, isLast, onResolve, onCardClick, snoozeMenuId, setSnoozeMenuId, onSnooze }: {
+function AlertRow({ alert, isLast, onResolve, onCardClick, snoozeMenuId, setSnoozeMenuId, onSnooze, onAssign, pendingAction }: {
   alert: Alert;
   isLast: boolean;
   onResolve: (id: number) => void;
   onCardClick?: (cardId: string) => void;
   snoozeMenuId: number | null;
   setSnoozeMenuId: (id: number | null) => void;
-  onSnooze: (id: number, ms: number) => void;
+  onSnooze: (id: number, minutes: number) => void;
+  onAssign: (id: number) => void;
+  pendingAction: number | null;
 }) {
   const severity = getSeverity(alert);
   const age = Date.now() - new Date(alert.created_at).getTime();
   const ageLabel = age < 3600_000 ? `${Math.round(age / 60_000)}m ago` : age < 86400_000 ? `${Math.round(age / 3600_000)}h ago` : `${Math.round(age / 86400_000)}d ago`;
+  const isPending = pendingAction === alert.id;
 
   return (
-    <div className={`relative flex items-start gap-3 p-4 transition-colors hover:bg-bg-hover ${!isLast ? "border-b border-border" : ""}`}>
+    <div className={`relative flex items-start gap-3 p-4 transition-colors hover:bg-bg-hover ${!isLast ? "border-b border-border" : ""} ${isPending ? "opacity-50" : ""}`}>
       <div className="mt-0.5 shrink-0">
         {alertIcons[alert.alert_type] || <Eye className="h-4 w-4 text-text-muted" />}
       </div>
@@ -266,11 +282,24 @@ function AlertRow({ alert, isLast, onResolve, onCardClick, snoozeMenuId, setSnoo
           </span>
           {severity === "critical" && <TrustBadge variant="manual-review" />}
           {alert.magnitude >= 2.5 && <TrustBadge variant="sentiment-spike" detail={`${alert.magnitude.toFixed(1)}x magnitude`} />}
+          {alert.assigned_to && (
+            <span className="rounded-sm bg-info/10 px-1.5 py-0.5 text-[11px] font-medium text-info">{alert.assigned_to}</span>
+          )}
         </div>
         <p className="mt-0.5 text-sm text-text-secondary">{alert.message}</p>
         <p className="mt-0.5 text-xs text-text-muted">{ageLabel}</p>
       </div>
       <div className="flex shrink-0 items-center gap-1">
+        {/* Assign */}
+        <button
+          onClick={() => onAssign(alert.id)}
+          className="rounded-md p-2 text-text-muted transition-colors hover:bg-bg-secondary hover:text-text-primary min-h-[36px] min-w-[36px] flex items-center justify-center text-[11px] font-medium"
+          aria-label="Assign alert"
+          title="Assign"
+        >
+          @
+        </button>
+
         {/* Snooze */}
         <div className="relative">
           <button
@@ -285,7 +314,7 @@ function AlertRow({ alert, isLast, onResolve, onCardClick, snoozeMenuId, setSnoo
               {SNOOZE_OPTIONS.map((opt) => (
                 <button
                   key={opt.label}
-                  onClick={() => onSnooze(alert.id, opt.ms)}
+                  onClick={() => onSnooze(alert.id, opt.minutes)}
                   className="block w-full rounded px-3 py-1.5 text-left text-xs font-medium text-text-secondary hover:bg-bg-hover hover:text-text-primary min-h-[32px]"
                 >
                   Snooze {opt.label}

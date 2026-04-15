@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api, type EvaluateResponse, type Card } from "../lib/api";
 import { SearchBar } from "./SearchBar";
 import { TrustBadge, getConfidenceBadge } from "./TrustBadge";
-import { DollarSign, Loader2, Settings2, Calculator, Info } from "lucide-react";
+import { DollarSign, Loader2, Settings2, Calculator, Info, BookmarkPlus, Flag, Check } from "lucide-react";
 
 const CHANNELS = [
   { value: "ebay", label: "eBay", defaultFee: 13.25, defaultShipping: 4.5 },
@@ -24,6 +24,8 @@ export function EvaluateCard() {
   const [result, setResult] = useState<EvaluateResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [saved, setSaved] = useState<"saved" | "flagged" | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const handleChannelChange = (ch: string) => {
     setChannel(ch);
@@ -44,6 +46,7 @@ export function EvaluateCard() {
     setLoading(true);
     setError("");
     setResult(null);
+    setSaved(null);
     try {
       const res = await api.evaluate(selectedCard.id, priceNum, grade, gradingCompany);
       setResult(res);
@@ -54,6 +57,30 @@ export function EvaluateCard() {
       setError(err instanceof Error ? err.message : "Evaluation failed");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSave = async (flagForReview: boolean) => {
+    if (!selectedCard || !result) return;
+    setSaving(true);
+    try {
+      await api.saveRecommendation({
+        card_id: selectedCard.id,
+        grade,
+        grading_company: gradingCompany,
+        decision: result.decision,
+        offered_price: parseFloat(price),
+        fair_value: result.fair_value,
+        margin: result.margin,
+        confidence: result.confidence,
+        channel,
+        notes: flagForReview ? "Flagged for review" : undefined,
+      });
+      setSaved(flagForReview ? "flagged" : "saved");
+    } catch {
+      // Save failed — don't block the user
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -183,10 +210,37 @@ export function EvaluateCard() {
             </div>
           </div>
           <p className="text-sm text-text-secondary">{result.reasoning}</p>
-          <p className="mt-2 flex items-center gap-1.5 text-[11px] text-text-muted">
-            <Info className="h-3 w-3" />
-            Uses standard retail economics (13% fee, $5 shipping, 20% margin target). Customize below.
-          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
+            {saved ? (
+              <span className="flex items-center gap-1.5 text-sm font-medium text-buy">
+                <Check className="h-4 w-4" />
+                {saved === "flagged" ? "Flagged for review" : "Saved to recommendations"}
+              </span>
+            ) : (
+              <>
+                <button
+                  onClick={() => handleSave(false)}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 rounded-md bg-buy/10 px-3 py-2 text-xs font-medium text-buy transition-colors hover:bg-buy/20 min-h-[36px]"
+                >
+                  {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <BookmarkPlus className="h-3.5 w-3.5" />}
+                  Save Recommendation
+                </button>
+                <button
+                  onClick={() => handleSave(true)}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 rounded-md bg-hold/10 px-3 py-2 text-xs font-medium text-hold transition-colors hover:bg-hold/20 min-h-[36px]"
+                >
+                  <Flag className="h-3.5 w-3.5" />
+                  Flag for Review
+                </button>
+              </>
+            )}
+            <p className="ml-auto text-[11px] text-text-muted">
+              <Info className="mr-1 inline h-3 w-3" />
+              Uses standard retail economics. Customize below.
+            </p>
+          </div>
         </div>
       )}
 

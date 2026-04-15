@@ -218,7 +218,7 @@ function AppShell() {
           <Route
             path="/"
             element={
-              <MarketOverview onCardSelect={handleSelectCard} alerts={alerts} onNavigate={navigate} />
+              <MarketOverview alerts={alerts} onNavigate={navigate} />
             }
           />
           <Route
@@ -256,7 +256,7 @@ function AppShell() {
                     {alerts.length} active alert{alerts.length !== 1 ? "s" : ""} — resolve, snooze, or investigate
                   </p>
                 </div>
-                <AlertsList alerts={alerts} onResolve={handleResolveAlert} onCardClick={(cardId) => navigate(`/card/${cardId}`)} showControls />
+                <AlertsList alerts={alerts} onResolve={handleResolveAlert} onRefresh={refetchAlerts} onCardClick={(cardId) => navigate(`/card/${cardId}`)} showControls />
               </div>
             }
           />

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { api, type Card, type Alert } from "../lib/api";
+import { api, type Alert } from "../lib/api";
 import { StatCard } from "./StatCard";
 import { TrustBadge } from "./TrustBadge";
 import {
@@ -9,15 +9,15 @@ import {
   ShoppingCart,
   ChevronRight,
   Eye,
+  Clock,
 } from "lucide-react";
 
 interface MarketOverviewProps {
-  onCardSelect?: (card: Card) => void;
   alerts?: Alert[];
   onNavigate?: (path: string) => void;
 }
 
-export function MarketOverview({ onCardSelect, alerts = [], onNavigate }: MarketOverviewProps) {
+export function MarketOverview({ alerts = [], onNavigate }: MarketOverviewProps) {
   const { data: market, isLoading } = useQuery({
     queryKey: ["market-index"],
     queryFn: api.getMarketIndex,
@@ -42,14 +42,14 @@ export function MarketOverview({ onCardSelect, alerts = [], onNavigate }: Market
     refetchInterval: 60_000,
   });
 
-  const handleMoverClick = async (cardId: string) => {
-    if (!onCardSelect) return;
-    try {
-      const card = await api.getCard(cardId);
-      onCardSelect(card as Card);
-    } catch {
-      onCardSelect({ id: cardId, name: cardId, set_name: "", set_year: 0, card_number: "", category: "", player_character: null, image_url: null });
-    }
+  const { data: staleData } = useQuery({
+    queryKey: ["stale-cards"],
+    queryFn: () => api.getStaleCards(10),
+    refetchInterval: 120_000,
+  });
+
+  const handleCardClick = (cardId: string) => {
+    onNavigate?.(`/card/${cardId}`);
   };
 
   if (isLoading) {
@@ -71,8 +71,9 @@ export function MarketOverview({ onCardSelect, alerts = [], onNavigate }: Market
   const topBuys = moversDown?.movers?.slice(0, 5) || [];
   const bigMoves = moversUp?.movers?.filter((m) => Math.abs(m.change_pct) >= 10).slice(0, 5) || [];
   const trendingCards = trending?.trending?.slice(0, 6) || [];
+  const staleCards = staleData?.cards || [];
 
-  const totalActions = highSeverityAlerts.length + topBuys.length + bigMoves.length;
+  const totalActions = highSeverityAlerts.length + topBuys.length + bigMoves.length + staleCards.length;
 
   return (
     <div className="space-y-6">
@@ -122,7 +123,7 @@ export function MarketOverview({ onCardSelect, alerts = [], onNavigate }: Market
             {highSeverityAlerts.slice(0, 3).map((alert) => (
               <button
                 key={alert.id}
-                onClick={() => handleMoverClick(alert.card_id)}
+                onClick={() => handleCardClick(alert.card_id)}
                 className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-sell/5 min-h-[44px]"
               >
                 <div className="flex-1 min-w-0">
@@ -134,6 +135,38 @@ export function MarketOverview({ onCardSelect, alerts = [], onNavigate }: Market
                 </div>
                 <span className="shrink-0 text-xs text-text-muted">{new Date(alert.created_at).toLocaleTimeString()}</span>
                 <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* ─── Stale / Missing Predictions ─── */}
+      {staleCards.length > 0 && (
+        <section className="rounded-lg border border-warning/30 bg-warning/5 shadow-sm">
+          <div className="flex items-center justify-between border-b border-warning/20 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <Clock className="h-4 w-4 text-warning" />
+              <h3 className="text-sm font-bold text-text-primary">Stale Predictions</h3>
+              <span className="rounded-full bg-warning/15 px-2 py-0.5 text-[11px] font-bold text-warning">{staleCards.length}</span>
+            </div>
+          </div>
+          <div className="divide-y divide-warning/10">
+            {staleCards.slice(0, 5).map((card) => (
+              <button
+                key={card.card_id}
+                onClick={() => handleCardClick(card.card_id)}
+                className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-warning/5 min-h-[44px]"
+              >
+                <div className="flex-1 min-w-0">
+                  <span className="text-sm font-medium text-text-primary truncate block">{card.name}</span>
+                  <span className="text-xs text-text-muted">{card.category.replace(/_/g, " ")}</span>
+                </div>
+                <TrustBadge
+                  variant={card.staleness === "no_prediction" ? "manual-review" : "stale"}
+                  detail={card.staleness === "no_prediction" ? "No prediction" : `Last: ${card.predicted_at ? new Date(card.predicted_at).toLocaleDateString() : "unknown"}`}
+                />
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
               </button>
             ))}
           </div>
@@ -159,7 +192,7 @@ export function MarketOverview({ onCardSelect, alerts = [], onNavigate }: Market
             {topBuys.length > 0 ? topBuys.map((m, i) => (
               <button
                 key={m.card_id}
-                onClick={() => handleMoverClick(m.card_id)}
+                onClick={() => handleCardClick(m.card_id)}
                 className={`flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-bg-hover min-h-[44px] ${
                   i < topBuys.length - 1 ? "border-b border-border" : ""
                 }`}
@@ -194,7 +227,7 @@ export function MarketOverview({ onCardSelect, alerts = [], onNavigate }: Market
             {bigMoves.length > 0 ? bigMoves.map((m, i) => (
               <button
                 key={m.card_id}
-                onClick={() => handleMoverClick(m.card_id)}
+                onClick={() => handleCardClick(m.card_id)}
                 className={`flex w-full items-center justify-between px-4 py-3 text-left transition-colors hover:bg-bg-hover min-h-[44px] ${
                   i < bigMoves.length - 1 ? "border-b border-border" : ""
                 }`}
@@ -236,7 +269,7 @@ export function MarketOverview({ onCardSelect, alerts = [], onNavigate }: Market
             {medSeverityAlerts.slice(0, 4).map((alert) => (
               <button
                 key={alert.id}
-                onClick={() => handleMoverClick(alert.card_id)}
+                onClick={() => handleCardClick(alert.card_id)}
                 className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-bg-hover min-h-[44px]"
               >
                 <span className="text-sm text-text-primary truncate flex-1">{alert.card_name}</span>
@@ -260,7 +293,7 @@ export function MarketOverview({ onCardSelect, alerts = [], onNavigate }: Market
             {trendingCards.map((t: Record<string, unknown>) => (
               <button
                 key={t.card_id as string}
-                onClick={() => handleMoverClick(t.card_id as string)}
+                onClick={() => handleCardClick(t.card_id as string)}
                 className="shrink-0 rounded-lg border border-border bg-bg-primary px-3 py-2 text-left transition-colors hover:border-accent/30 hover:bg-bg-hover min-h-[44px]"
               >
                 <p className="text-sm font-semibold text-text-primary truncate max-w-[150px]">{t.name as string}</p>
@@ -282,7 +315,7 @@ export function MarketOverview({ onCardSelect, alerts = [], onNavigate }: Market
             {moversUp.movers.slice(0, 6).map((m, i) => (
               <button
                 key={m.card_id}
-                onClick={() => handleMoverClick(m.card_id)}
+                onClick={() => handleCardClick(m.card_id)}
                 className="flex items-center justify-between border-b border-border px-4 py-2.5 text-left transition-colors hover:bg-bg-hover min-h-[44px] last:border-b-0 sm:[&:nth-last-child(2)]:border-b-0"
               >
                 <div className="flex items-center gap-2 min-w-0">

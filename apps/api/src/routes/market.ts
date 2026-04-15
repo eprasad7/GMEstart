@@ -93,6 +93,46 @@ marketRoutes.get("/movers", async (c) => {
   return c.json({ direction, days, movers: results });
 });
 
+// GET /v1/market/stale — cards with stale or missing predictions
+marketRoutes.get("/stale", async (c) => {
+  const limit = Math.min(parseInt(c.req.query("limit") || "20"), 50);
+  const staleHours = parseInt(c.req.query("stale_hours") || "36");
+
+  const results = await c.env.DB.prepare(
+    `SELECT
+       cc.id as card_id,
+       cc.name,
+       cc.category,
+       mp.predicted_at,
+       mp.confidence,
+       mp.fair_value,
+       CASE
+         WHEN mp.predicted_at IS NULL THEN 'no_prediction'
+         WHEN mp.predicted_at < datetime('now', '-' || ? || ' hours') THEN 'stale'
+         ELSE 'ok'
+       END as staleness
+     FROM card_catalog cc
+     LEFT JOIN model_predictions mp ON mp.card_id = cc.id
+       AND mp.predicted_at = (
+         SELECT MAX(predicted_at) FROM model_predictions
+         WHERE card_id = cc.id
+       )
+     WHERE mp.predicted_at IS NULL
+        OR mp.predicted_at < datetime('now', '-' || ? || ' hours')
+     ORDER BY
+       CASE WHEN mp.predicted_at IS NULL THEN 0 ELSE 1 END,
+       mp.predicted_at ASC
+     LIMIT ?`
+  )
+    .bind(staleHours, staleHours, limit)
+    .all();
+
+  return c.json({
+    stale_hours: staleHours,
+    cards: results.results,
+  });
+});
+
 /**
  * Compute per-category market index and 30-day trend.
  * Index = weighted average of median card prices (normalized, not scaled by catalog size).

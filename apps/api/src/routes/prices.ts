@@ -127,3 +127,56 @@ priceRoutes.get("/:cardId/all", async (c) => {
 
   return c.json({ card_id: cardId, grades: predictions.results });
 });
+
+// GET /v1/price/:cardId/evidence — source breakdown, anomalies, population for trust display
+priceRoutes.get("/:cardId/evidence", async (c) => {
+  const cardId = c.req.param("cardId");
+  const grade = c.req.query("grade") || "RAW";
+  const gradingCompany = c.req.query("grading_company") || "RAW";
+
+  const [sourceMix, anomalies, population] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT source, COUNT(*) as count, AVG(price_usd) as avg_price
+       FROM price_observations
+       WHERE card_id = ? AND grading_company = ? AND grade = ?
+         AND sale_date >= date('now', '-90 days') AND is_anomaly = 0
+       GROUP BY source
+       ORDER BY count DESC`
+    ).bind(cardId, gradingCompany, grade).all(),
+
+    c.env.DB.prepare(
+      `SELECT COUNT(*) as excluded, AVG(price_usd) as avg_anomaly_price
+       FROM price_observations
+       WHERE card_id = ? AND grading_company = ? AND grade = ?
+         AND sale_date >= date('now', '-90 days') AND is_anomaly = 1`
+    ).bind(cardId, gradingCompany, grade).first(),
+
+    c.env.DB.prepare(
+      `SELECT population, pop_higher, total_population, snapshot_date
+       FROM population_reports
+       WHERE card_id = ? AND grading_company = ? AND grade = ?
+       ORDER BY snapshot_date DESC LIMIT 1`
+    ).bind(cardId, gradingCompany, grade).first(),
+  ]);
+
+  return c.json({
+    card_id: cardId,
+    grade,
+    grading_company: gradingCompany,
+    sources: sourceMix.results.map((r) => ({
+      source: r.source,
+      count: r.count,
+      avg_price: Math.round((r.avg_price as number) * 100) / 100,
+    })),
+    anomalies: {
+      excluded_count: (anomalies?.excluded as number) || 0,
+      avg_anomaly_price: anomalies?.avg_anomaly_price ? Math.round((anomalies.avg_anomaly_price as number) * 100) / 100 : null,
+    },
+    population: population ? {
+      count: population.population,
+      higher_grades: population.pop_higher,
+      total: population.total_population,
+      snapshot_date: population.snapshot_date,
+    } : null,
+  });
+});

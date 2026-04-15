@@ -4,10 +4,11 @@ import { parsePositiveInt } from "../lib/params";
 
 export const alertRoutes = new Hono<{ Bindings: Env }>();
 
-// GET /v1/alerts/active
+// GET /v1/alerts/active — excludes snoozed alerts by default
 alertRoutes.get("/active", async (c) => {
   const category = c.req.query("category");
   const alertType = c.req.query("type");
+  const includeSnoozed = c.req.query("include_snoozed") === "true";
   const limit = Math.min(parseInt(c.req.query("limit") || "50"), 200);
 
   let sql = `
@@ -17,6 +18,9 @@ alertRoutes.get("/active", async (c) => {
     WHERE pa.is_active = 1`;
   const params: unknown[] = [];
 
+  if (!includeSnoozed) {
+    sql += ` AND (pa.snoozed_until IS NULL OR pa.snoozed_until < datetime('now'))`;
+  }
   if (category) {
     sql += ` AND cc.category = ?`;
     params.push(category);
@@ -26,7 +30,7 @@ alertRoutes.get("/active", async (c) => {
     params.push(alertType);
   }
 
-  sql += ` ORDER BY pa.created_at DESC LIMIT ?`;
+  sql += ` ORDER BY pa.magnitude DESC, pa.created_at DESC LIMIT ?`;
   params.push(limit);
 
   const results = await c.env.DB.prepare(sql).bind(...params).all();
@@ -43,6 +47,54 @@ alertRoutes.post("/:id/resolve", async (c) => {
     .run();
 
   return c.json({ status: "resolved" });
+});
+
+// POST /v1/alerts/:id/snooze
+alertRoutes.post("/:id/snooze", async (c) => {
+  const id = c.req.param("id");
+  let body: { duration_minutes: number };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Expected: { duration_minutes: number }" }, 400);
+  }
+
+  const { duration_minutes } = body;
+  if (!duration_minutes || duration_minutes <= 0 || duration_minutes > 10080) {
+    return c.json({ error: "duration_minutes must be between 1 and 10080 (7 days)" }, 400);
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE price_alerts SET snoozed_until = datetime('now', '+' || ? || ' minutes') WHERE id = ? AND is_active = 1`
+  )
+    .bind(duration_minutes, id)
+    .run();
+
+  return c.json({ status: "snoozed", duration_minutes });
+});
+
+// POST /v1/alerts/:id/assign
+alertRoutes.post("/:id/assign", async (c) => {
+  const id = c.req.param("id");
+  let body: { assigned_to: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Expected: { assigned_to: string }" }, 400);
+  }
+
+  const { assigned_to } = body;
+  if (!assigned_to || typeof assigned_to !== "string") {
+    return c.json({ error: "assigned_to is required" }, 400);
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE price_alerts SET assigned_to = ? WHERE id = ? AND is_active = 1`
+  )
+    .bind(assigned_to, id)
+    .run();
+
+  return c.json({ status: "assigned", assigned_to });
 });
 
 // GET /v1/alerts/history — resolved alerts

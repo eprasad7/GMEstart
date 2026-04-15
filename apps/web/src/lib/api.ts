@@ -114,6 +114,44 @@ export interface Alert {
   trigger_source: string;
   message: string;
   is_active: boolean;
+  snoozed_until: string | null;
+  assigned_to: string | null;
+  created_at: string;
+}
+
+export interface StaleCard {
+  card_id: string;
+  name: string;
+  category: string;
+  predicted_at: string | null;
+  confidence: string | null;
+  fair_value: number | null;
+  staleness: "no_prediction" | "stale";
+}
+
+export interface PriceEvidence {
+  card_id: string;
+  grade: string;
+  grading_company: string;
+  sources: Array<{ source: string; count: number; avg_price: number }>;
+  anomalies: { excluded_count: number; avg_anomaly_price: number | null };
+  population: { count: number; higher_grades: number; total: number; snapshot_date: string } | null;
+}
+
+export interface Recommendation {
+  id: number;
+  card_id: string;
+  card_name: string;
+  grade: string;
+  grading_company: string;
+  decision: string;
+  offered_price: number;
+  fair_value: number;
+  margin: number;
+  confidence: string;
+  channel: string | null;
+  notes: string | null;
+  status: string;
   created_at: string;
 }
 
@@ -194,10 +232,47 @@ export const api = {
   resolveAlert: (id: number) =>
     fetchApi<{ status: string }>(`/alerts/${id}/resolve`, { method: "POST" }),
 
+  snoozeAlert: (id: number, durationMinutes: number) =>
+    fetchApi<{ status: string }>(`/alerts/${id}/snooze`, {
+      method: "POST",
+      body: JSON.stringify({ duration_minutes: durationMinutes }),
+    }),
+
+  assignAlert: (id: number, assignedTo: string) =>
+    fetchApi<{ status: string }>(`/alerts/${id}/assign`, {
+      method: "POST",
+      body: JSON.stringify({ assigned_to: assignedTo }),
+    }),
+
+  // Evaluate — save recommendation
+  saveRecommendation: (rec: {
+    card_id: string; grade: string; grading_company: string;
+    decision: string; offered_price: number; fair_value: number;
+    margin: number; confidence: string; channel?: string; notes?: string;
+  }) =>
+    fetchApi<{ status: string; id: number }>("/evaluate/save", {
+      method: "POST",
+      body: JSON.stringify(rec),
+    }),
+
+  getRecommendations: (status = "pending") =>
+    fetchApi<{ recommendations: Recommendation[] }>(`/evaluate/recommendations?status=${status}`),
+
+  // Price evidence
+  getPriceEvidence: (cardId: string, grade?: string, gradingCompany?: string) => {
+    const params = new URLSearchParams();
+    if (grade) params.set("grade", grade);
+    if (gradingCompany) params.set("grading_company", gradingCompany);
+    return fetchApi<PriceEvidence>(`/price/${cardId}/evidence?${params}`);
+  },
+
   // Market
   getMarketIndex: () =>
     fetchApi<MarketIndex>("/market/index"),
 
   getMovers: (direction: "up" | "down" = "up", days = 7) =>
     fetchApi<{ movers: Mover[] }>(`/market/movers?direction=${direction}&days=${days}`),
+
+  getStaleCards: (limit = 20) =>
+    fetchApi<{ cards: StaleCard[] }>(`/market/stale?limit=${limit}`),
 };

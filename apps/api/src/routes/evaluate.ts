@@ -110,3 +110,58 @@ evaluateRoutes.post("/", async (c) => {
     reasoning,
   });
 });
+
+// POST /v1/evaluate/save — save a recommendation for later review
+evaluateRoutes.post("/save", async (c) => {
+  let body: {
+    card_id: string;
+    grade?: string;
+    grading_company?: string;
+    decision: string;
+    offered_price: number;
+    fair_value: number;
+    margin: number;
+    confidence: string;
+    channel?: string;
+    notes?: string;
+  };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const { card_id, grade = "RAW", grading_company = "RAW", decision, offered_price, fair_value, margin, confidence, channel, notes } = body;
+
+  if (!card_id || !decision || offered_price == null || fair_value == null) {
+    return c.json({ error: "card_id, decision, offered_price, and fair_value are required" }, 400);
+  }
+
+  const result = await c.env.DB.prepare(
+    `INSERT INTO recommendations (card_id, grade, grading_company, decision, offered_price, fair_value, margin, confidence, channel, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  )
+    .bind(card_id, grade, grading_company, decision, offered_price, fair_value, margin, confidence, channel || null, notes || null)
+    .run();
+
+  return c.json({ status: "saved", id: result.meta.last_row_id });
+});
+
+// GET /v1/evaluate/recommendations — list saved recommendations
+evaluateRoutes.get("/recommendations", async (c) => {
+  const status = c.req.query("status") || "pending";
+  const limit = Math.min(parseInt(c.req.query("limit") || "50"), 200);
+
+  const results = await c.env.DB.prepare(
+    `SELECT r.*, cc.name as card_name
+     FROM recommendations r
+     JOIN card_catalog cc ON cc.id = r.card_id
+     WHERE r.status = ?
+     ORDER BY r.created_at DESC
+     LIMIT ?`
+  )
+    .bind(status, limit)
+    .all();
+
+  return c.json({ recommendations: results.results });
+});

@@ -39,6 +39,13 @@ export function CardDetail({ card, onBack }: CardDetailProps) {
     queryFn: () => api.getSentiment(card.id),
   });
 
+  // Evidence query — only fire when explainer is open
+  const { data: evidence } = useQuery({
+    queryKey: ["evidence", card.id, grade, gradingCompany],
+    queryFn: () => api.getPriceEvidence(card.id, grade, gradingCompany),
+    enabled: showExplainer,
+  });
+
   // Grade comparison queries — only fire when comparison is open
   const comparisonItems = compareMode === "grade"
     ? COMPARE_GRADES.map((g) => ({ grade: g, company: gradingCompany }))
@@ -237,6 +244,33 @@ export function CardDetail({ card, onBack }: CardDetailProps) {
               }
               signal={price.confidence === "HIGH" ? "up" : price.confidence === "LOW" ? "down" : "neutral"}
             />
+            {/* Source Breakdown */}
+            {evidence && evidence.sources.length > 0 && (
+              <ExplainerRow
+                label="Comp Sources"
+                value={evidence.sources.map((s) => `${s.source} (${s.count})`).join(", ")}
+                detail={evidence.sources.length === 1 ? "Single source — cross-reference recommended" : `${evidence.sources.length} sources provide diversity`}
+                signal={evidence.sources.length >= 2 ? "up" : "down"}
+              />
+            )}
+            {/* Anomaly Exclusions */}
+            {evidence && evidence.anomalies.excluded_count > 0 && (
+              <ExplainerRow
+                label="Anomalies Excluded"
+                value={`${evidence.anomalies.excluded_count} sale${evidence.anomalies.excluded_count > 1 ? "s" : ""} removed`}
+                detail={evidence.anomalies.avg_anomaly_price ? `Avg anomaly price: $${evidence.anomalies.avg_anomaly_price.toFixed(0)} (excluded from model)` : "Outliers excluded from fair value calculation"}
+                signal="neutral"
+              />
+            )}
+            {/* Population Signal */}
+            {evidence?.population && (
+              <ExplainerRow
+                label="Population"
+                value={`${evidence.population.count} at this grade`}
+                detail={`${evidence.population.higher_grades} graded higher out of ${evidence.population.total} total${evidence.population.snapshot_date ? ` (${new Date(evidence.population.snapshot_date).toLocaleDateString()})` : ""}`}
+                signal={evidence.population.count < 50 ? "up" : "neutral"}
+              />
+            )}
             {sentiment && (
               <>
                 <ExplainerRow
