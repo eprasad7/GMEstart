@@ -1,18 +1,27 @@
 import { describe, it, expect } from "vitest";
 
 /**
- * Tests for the statistical estimation and NRV logic
- * in the inference service.
+ * Tests for pricing engine logic.
  *
- * These test the pure functions extracted from inference.ts.
+ * NOTE: These test extracted/replicated logic rather than importing
+ * from inference.ts directly, because inference.ts depends on Cloudflare
+ * Worker bindings (D1, R2, KV) that aren't available in vitest.
+ *
+ * The NRV constants and formulas are duplicated here and MUST match
+ * apps/api/src/services/inference.ts and apps/api/src/routes/evaluate.ts.
+ * If those files change, these tests must be updated to match.
+ *
+ * TODO: Extract pure functions from inference.ts into a testable module
+ * (e.g., lib/pricing.ts) that both the Worker and tests can import.
  */
 
-// Constants matching inference.ts
+// Constants — MUST match inference.ts and evaluate.ts
 const MARKETPLACE_FEE = 0.13;
 const SHIPPING = 5.0;
 const RETURN_RATE = 0.03;
 const REQUIRED_MARGIN = 0.20;
 
+// Replicated from evaluate.ts
 function computeNrv(fairValue: number): number {
   return fairValue * (1 - MARKETPLACE_FEE) * (1 - RETURN_RATE) - SHIPPING;
 }
@@ -21,123 +30,73 @@ function computeMaxBuyPrice(fairValue: number): number {
   return computeNrv(fairValue) * (1 - REQUIRED_MARGIN);
 }
 
-function statisticalEstimation(features: Record<string, number | boolean | string>) {
-  const volumeBucket = (features.volume_bucket as "high" | "medium" | "low") || "low";
-  const avgPrice30d = (features.avg_price_30d as number) || 0;
-  const avgPrice90d = (features.avg_price_90d as number) || 0;
-  const volatility = (features.price_volatility_30d as number) || 0;
-  const momentum = (features.price_momentum as number) || 1;
+// Replicated from evaluate.ts
+function makeDecision(
+  offeredPrice: number,
+  fairValue: number,
+  sellThreshold: number,
+  confidence: "HIGH" | "MEDIUM" | "LOW"
+): "STRONG_BUY" | "REVIEW_BUY" | "FAIR_VALUE" | "SELL_SIGNAL" {
+  const nrv = computeNrv(fairValue);
+  const maxBuyPrice = computeMaxBuyPrice(fairValue);
 
-  const basePrice = avgPrice30d > 0
-    ? avgPrice30d * 0.7 + avgPrice90d * 0.3
-    : avgPrice90d > 0 ? avgPrice90d : 0;
-
-  if (basePrice === 0) return { fair_value: 0, buy_threshold: 0, sell_threshold: 0, confidence: "LOW" as const };
-
-  const adjustedPrice = basePrice * (momentum > 0 ? momentum : 1);
-
-  let intervalMultiplier: number;
-  let confidence: "HIGH" | "MEDIUM" | "LOW";
-  switch (volumeBucket) {
-    case "high": intervalMultiplier = Math.max(0.10, volatility * 1.5); confidence = volatility < 0.15 ? "HIGH" : "MEDIUM"; break;
-    case "medium": intervalMultiplier = Math.max(0.20, volatility * 2.0); confidence = "MEDIUM"; break;
-    default: intervalMultiplier = Math.max(0.35, volatility * 3.0); confidence = "LOW"; break;
+  if (offeredPrice < maxBuyPrice) {
+    return confidence !== "LOW" ? "STRONG_BUY" : "REVIEW_BUY";
+  } else if (offeredPrice > sellThreshold) {
+    return "SELL_SIGNAL";
+  } else if (offeredPrice > nrv) {
+    return "FAIR_VALUE";
   }
-
-  const nrv = adjustedPrice * (1 - MARKETPLACE_FEE) * (1 - RETURN_RATE) - SHIPPING;
-  const maxBuyPrice = nrv * (1 - REQUIRED_MARGIN);
-
-  return {
-    fair_value: adjustedPrice,
-    buy_threshold: Math.max(0, maxBuyPrice),
-    sell_threshold: adjustedPrice * (1 + intervalMultiplier),
-    confidence,
-  };
+  return "FAIR_VALUE";
 }
 
-describe("NRV calculations", () => {
-  it("computes NRV correctly for $100 card", () => {
-    const nrv = computeNrv(100);
-    expect(nrv).toBeCloseTo(79.39, 1);
+describe("NRV calculations (must match evaluate.ts)", () => {
+  it("NRV = fairValue * (1-fees) * (1-returns) - shipping", () => {
+    // $100 * 0.87 * 0.97 - $5 = $79.39
+    expect(computeNrv(100)).toBeCloseTo(79.39, 1);
   });
 
-  it("NRV is negative for very cheap cards", () => {
+  it("NRV is negative for sub-$6 cards", () => {
     expect(computeNrv(5)).toBeLessThan(0);
+    expect(computeNrv(6)).toBeCloseTo(0.1, 0);
   });
 
-  it("max buy price is 80% of NRV", () => {
-    const maxBuy = computeMaxBuyPrice(100);
-    expect(maxBuy).toBeCloseTo(computeNrv(100) * 0.80, 1);
+  it("max buy price = NRV * 0.80", () => {
+    expect(computeMaxBuyPrice(100)).toBeCloseTo(63.51, 0);
   });
 
-  it("buy threshold is always below fair value", () => {
-    const result = statisticalEstimation({ avg_price_30d: 100, avg_price_90d: 100, volume_bucket: "high", price_volatility_30d: 0.10, price_momentum: 1.0 });
-    expect(result.buy_threshold).toBeLessThan(result.fair_value);
-  });
-
-  it("sell threshold is always above fair value", () => {
-    const result = statisticalEstimation({ avg_price_30d: 100, avg_price_90d: 100, volume_bucket: "high", price_volatility_30d: 0.10, price_momentum: 1.0 });
-    expect(result.sell_threshold).toBeGreaterThan(result.fair_value);
+  it("max buy price < NRV < fair value", () => {
+    const fv = 200;
+    expect(computeMaxBuyPrice(fv)).toBeLessThan(computeNrv(fv));
+    expect(computeNrv(fv)).toBeLessThan(fv);
   });
 });
 
-describe("Statistical estimation", () => {
-  it("returns zero for no price data", () => {
-    const result = statisticalEstimation({ avg_price_30d: 0, avg_price_90d: 0 });
-    expect(result.fair_value).toBe(0);
+describe("Decision logic (must match evaluate.ts)", () => {
+  it("STRONG_BUY when price < max buy and HIGH confidence", () => {
+    expect(makeDecision(30, 100, 120, "HIGH")).toBe("STRONG_BUY");
   });
 
-  it("weights 30d average higher than 90d", () => {
-    const result = statisticalEstimation({ avg_price_30d: 200, avg_price_90d: 100, volume_bucket: "high", price_volatility_30d: 0.10, price_momentum: 1.0 });
-    // 200*0.7 + 100*0.3 = 170
-    expect(result.fair_value).toBe(170);
+  it("REVIEW_BUY when price < max buy but LOW confidence", () => {
+    expect(makeDecision(30, 100, 120, "LOW")).toBe("REVIEW_BUY");
   });
 
-  it("applies momentum", () => {
-    const base = statisticalEstimation({ avg_price_30d: 100, avg_price_90d: 100, volume_bucket: "high", price_volatility_30d: 0.10, price_momentum: 1.0 });
-    const rising = statisticalEstimation({ avg_price_30d: 100, avg_price_90d: 100, volume_bucket: "high", price_volatility_30d: 0.10, price_momentum: 1.2 });
-    expect(rising.fair_value).toBeGreaterThan(base.fair_value);
+  it("SELL_SIGNAL when price > sell threshold", () => {
+    expect(makeDecision(150, 100, 120, "HIGH")).toBe("SELL_SIGNAL");
   });
 
-  it("high volume + low volatility = HIGH confidence", () => {
-    const result = statisticalEstimation({ avg_price_30d: 100, avg_price_90d: 100, volume_bucket: "high", price_volatility_30d: 0.05, price_momentum: 1.0 });
-    expect(result.confidence).toBe("HIGH");
+  it("FAIR_VALUE when price between max buy and sell threshold", () => {
+    expect(makeDecision(80, 100, 120, "HIGH")).toBe("FAIR_VALUE");
   });
 
-  it("low volume = LOW confidence", () => {
-    const result = statisticalEstimation({ avg_price_30d: 100, avg_price_90d: 100, volume_bucket: "low", price_volatility_30d: 0.10, price_momentum: 1.0 });
-    expect(result.confidence).toBe("LOW");
+  it("FAIR_VALUE when price exceeds NRV but below sell threshold", () => {
+    const nrv = computeNrv(100); // ~79.39
+    expect(makeDecision(85, 100, 120, "HIGH")).toBe("FAIR_VALUE");
   });
 
-  it("wider intervals for low volume cards", () => {
-    const high = statisticalEstimation({ avg_price_30d: 100, avg_price_90d: 100, volume_bucket: "high", price_volatility_30d: 0.10, price_momentum: 1.0 });
-    const low = statisticalEstimation({ avg_price_30d: 100, avg_price_90d: 100, volume_bucket: "low", price_volatility_30d: 0.10, price_momentum: 1.0 });
-    const highWidth = high.sell_threshold - high.buy_threshold;
-    const lowWidth = low.sell_threshold - low.buy_threshold;
-    expect(lowWidth).toBeGreaterThan(highWidth);
-  });
-});
-
-describe("Evaluate decision logic", () => {
-  it("STRONG_BUY when offered price < max buy price (HIGH confidence)", () => {
-    const fairValue = 100;
-    const nrv = computeNrv(fairValue);
-    const maxBuy = computeMaxBuyPrice(fairValue);
-    const offeredPrice = maxBuy - 10; // Below max buy
-    expect(offeredPrice).toBeLessThan(maxBuy);
-    // At HIGH confidence, this should be STRONG_BUY
-  });
-
-  it("SELL_SIGNAL when offered price > sell threshold", () => {
-    const result = statisticalEstimation({ avg_price_30d: 100, avg_price_90d: 100, volume_bucket: "high", price_volatility_30d: 0.10, price_momentum: 1.0 });
-    const offeredPrice = result.sell_threshold + 10;
-    expect(offeredPrice).toBeGreaterThan(result.sell_threshold);
-  });
-
-  it("FAIR_VALUE when price is between buy and sell", () => {
-    const result = statisticalEstimation({ avg_price_30d: 100, avg_price_90d: 100, volume_bucket: "high", price_volatility_30d: 0.10, price_momentum: 1.0 });
-    const offeredPrice = (result.buy_threshold + result.sell_threshold) / 2;
-    expect(offeredPrice).toBeGreaterThan(result.buy_threshold);
-    expect(offeredPrice).toBeLessThan(result.sell_threshold);
+  it("won't recommend buying unprofitable cards", () => {
+    // Offered at $85 for $100 card — NRV ~$79, max buy ~$63
+    // $85 > $63 so NOT a buy
+    expect(makeDecision(85, 100, 120, "HIGH")).not.toBe("STRONG_BUY");
   });
 });

@@ -61,6 +61,9 @@ export async function recordModelMonitoringSnapshot(
          AND mp.model_version != 'statistical-v1'
          AND po.price_usd >= 10
      )
+     -- NOTE: "mdape" is trimmed mean APE (top 5% excluded), not true median.
+     -- "coverage_90" is p10-p90 interval coverage (80% nominal, not 90%).
+     -- Column names kept for backward compat with D1 schema.
      SELECT COUNT(*) as sample_size,
             AVG(pct_err) as mdape,
             AVG(in_range) as coverage_90
@@ -80,9 +83,9 @@ export async function recordModelMonitoringSnapshot(
   const message =
     sampleSize === 0
       ? "No recent realized sales to score drift."
-      : `MdAPE ${mdapePct ?? "n/a"}%, coverage ${coverage90 ?? "n/a"}, prediction change rate ${Math.round(
+      : `MAPE(trimmed) ${mdapePct ?? "n/a"}%, p10-p90 coverage ${coverage90 ?? "n/a"}, prediction change rate ${Math.round(
           predictionChangeRate * 100
-        )}%.`;
+        )}%. (sales >= $10, top 5% errors excluded)`;
 
   await env.DB.prepare(
     `INSERT INTO model_monitoring_snapshots

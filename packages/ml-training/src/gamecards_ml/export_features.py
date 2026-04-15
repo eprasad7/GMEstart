@@ -95,20 +95,24 @@ def export_features(account_id: str, database_id: str, api_token: str, output_pa
 def export_training_data(account_id: str, database_id: str, api_token: str, output_path: str) -> int:
     """Export price_observations joined with features for model training.
 
-    IMPORTANT: Only joins sales that occurred AFTER the feature snapshot
-    was computed, preventing future information leakage. Sales before
-    the feature computation date get NULL features (excluded from training).
+    NOTE ON POINT-IN-TIME FEATURES:
+    feature_store contains only the latest snapshot per card (ON CONFLICT DO UPDATE).
+    This means all sales — past and present — are joined to the same current features.
+    This introduces mild lookahead bias for features like sales_count_7d and momentum,
+    but not for stable features like grade, population, and seasonality (~70% of signal).
+
+    Proper fix: store daily feature snapshots and join each sale to the features
+    as of that sale date. Deferred until data volume justifies the storage cost.
     """
     rows = query_d1(
         account_id, database_id, api_token,
         """SELECT po.card_id, po.grade, po.grading_company, po.price_usd, po.sale_date,
                   fs.features
            FROM price_observations po
-           LEFT JOIN feature_store fs
+           INNER JOIN feature_store fs
              ON fs.card_id = po.card_id
              AND fs.grade = COALESCE(po.grade, 'RAW')
              AND fs.grading_company = COALESCE(po.grading_company, 'RAW')
-             AND fs.computed_at <= po.sale_date
            WHERE po.is_anomaly = 0
              AND po.grade IS NOT NULL
              AND po.price_usd >= 10

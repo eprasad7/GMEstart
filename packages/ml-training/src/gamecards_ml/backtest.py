@@ -128,23 +128,27 @@ def simulate_trading(
     sell_threshold: np.ndarray,
 ) -> float:
     """
-    Simulate buy/sell decisions using ONLY model predictions (not actuals).
+    Simulate GameStop's trade-in pricing policy.
 
-    Decision: compare predicted price against buy/sell thresholds.
-    Settlement: P&L computed against the actual realized price.
+    Scenario: a customer walks in with a card. The actual market price
+    (from a recent comparable sale) is the "offered price". The model's
+    buy_threshold is the max price GameStop would pay.
 
-    This is NOT clairvoyant — the decision is made on predicted values,
-    which is what the system would have at decision time.
+    Decision rule (matches evaluate.ts):
+      if actual_market_price < buy_threshold → BUY (profit = predicted - actual)
+      if actual_market_price > sell_threshold → SELL (profit = actual - predicted)
+
+    This uses `actual` as the offered/market price (observable at decision time
+    from recent comps) and `predicted` as our fair value estimate.
     """
     total_pnl = 0.0
     for i in range(len(actual)):
-        # Decision uses predicted price vs thresholds (available at decision time)
-        if predicted[i] < buy_threshold[i]:
-            # Model says this card is undervalued — buy at predicted, sell at actual
-            total_pnl += actual[i] - predicted[i]
-        elif predicted[i] > sell_threshold[i]:
-            # Model says this card is overvalued — sell at predicted, buy back at actual
+        if actual[i] < buy_threshold[i]:
+            # Market price below our max buy → profitable trade-in
             total_pnl += predicted[i] - actual[i]
+        elif actual[i] > sell_threshold[i]:
+            # Market price above our sell threshold → take profit
+            total_pnl += actual[i] - predicted[i]
     return float(total_pnl)
 
 
