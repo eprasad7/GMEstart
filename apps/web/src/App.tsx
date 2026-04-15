@@ -7,7 +7,7 @@ import { MarketOverview } from "./components/MarketOverview";
 import { CardDetail } from "./components/CardDetail";
 import { EvaluateCard } from "./components/EvaluateCard";
 import { AlertsList } from "./components/AlertsList";
-import { AgentDashboard } from "./components/AgentDashboard";
+import { AgentDashboard, AgentSummary } from "./components/AgentDashboard";
 import { SignIn } from "./components/SignIn";
 import { CategoryBrowse } from "./components/CategoryBrowse";
 import {
@@ -225,7 +225,10 @@ function AppShell() {
           <Route
             path="/"
             element={
-              <MarketOverview alerts={alerts} onNavigate={navigate} />
+              <div className="space-y-6">
+                <MarketOverview alerts={alerts} onNavigate={navigate} />
+                <AgentSummary />
+              </div>
             }
           />
           <Route

@@ -444,7 +444,7 @@ function AgentCards() {
         </div>
 
         {/* Pricing Recommendations */}
-        <div className="p-5">
+        <div className="p-5 sm:border-l sm:border-border">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <Shield className="h-4 w-4 text-buy" />
@@ -473,6 +473,62 @@ function AgentCards() {
             <span>Rejected: {recs?.stats?.totalRejected ?? 0}</span>
             <span>Expired: {recs?.stats?.totalExpired ?? 0}</span>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Compact Agent Summary for the homepage ───
+
+export function AgentSummary() {
+  const { data: monitor } = useQuery({ queryKey: ["agent-monitor"], queryFn: api.getMonitorStatus, refetchInterval: 60_000 });
+  const { data: intel } = useQuery({ queryKey: ["agent-intel"], queryFn: api.getIntelligenceLatest, refetchInterval: 60_000 });
+  const { data: competitors } = useQuery({ queryKey: ["agent-competitors"], queryFn: api.getCompetitorStatus, refetchInterval: 60_000 });
+  const { data: recs } = useQuery({ queryKey: ["agent-recs"], queryFn: api.getRecommendationStatus, refetchInterval: 60_000 });
+
+  return (
+    <div className="rounded-lg border border-border bg-bg-card shadow-sm">
+      <div className="flex items-center justify-between border-b border-border px-5 py-3">
+        <div className="flex items-center gap-2">
+          <Bot className="h-4 w-4 text-accent" />
+          <h2 className="text-sm font-bold text-text-primary">AI Agents</h2>
+          <span className="rounded-full bg-buy/10 px-2 py-0.5 text-[10px] font-bold text-buy">4 active</span>
+        </div>
+      </div>
+
+      {/* Market Intel — show summary if available */}
+      {intel?.summary && (
+        <div className="border-b border-border px-5 py-3">
+          <div className="flex items-center gap-2 mb-1">
+            <Bot className="h-3.5 w-3.5 text-info" />
+            <span className="text-xs font-semibold text-text-primary">Daily Market Briefing</span>
+            <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${
+              intel.marketSentiment === "bullish" ? "bg-buy/10 text-buy" :
+              intel.marketSentiment === "bearish" ? "bg-sell/10 text-sell" : "bg-bg-secondary text-text-muted"
+            }`}>{intel.marketSentiment}</span>
+          </div>
+          <p className="text-xs text-text-secondary leading-relaxed line-clamp-3">{intel.summary}</p>
+        </div>
+      )}
+
+      {/* Agent stats row */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-border">
+        <div className="px-4 py-3 text-center">
+          <p className="text-xl font-bold text-accent">{monitor?.activeAlerts ?? 0}</p>
+          <p className="text-[11px] text-text-muted">Price Alerts</p>
+        </div>
+        <div className="px-4 py-3 text-center">
+          <p className="text-xl font-bold text-sell">{competitors?.overpriced ?? 0}</p>
+          <p className="text-[11px] text-text-muted">Overpriced</p>
+        </div>
+        <div className="px-4 py-3 text-center">
+          <p className="text-xl font-bold text-buy">{competitors?.underpriced ?? 0}</p>
+          <p className="text-[11px] text-text-muted">Underpriced</p>
+        </div>
+        <div className="px-4 py-3 text-center">
+          <p className="text-xl font-bold text-accent">{recs?.pendingCount ?? 0}</p>
+          <p className="text-[11px] text-text-muted">Pending Actions</p>
         </div>
       </div>
     </div>
