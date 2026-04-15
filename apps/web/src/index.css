@@ -3,24 +3,24 @@
 @theme {
   /* ─── GameStop-inspired Color Tokens (OKLCH) ─── */
 
-  /* Surfaces — light content, dark nav */
-  --color-bg-primary: oklch(0.97 0.003 260);
-  --color-bg-secondary: oklch(0.94 0.005 260);
-  --color-bg-tertiary: oklch(0.90 0.007 260);
+  /* Surfaces — wider contrast steps between layers */
+  --color-bg-primary: oklch(0.96 0.003 260);
+  --color-bg-secondary: oklch(0.92 0.005 260);
+  --color-bg-tertiary: oklch(0.88 0.007 260);
   --color-bg-card: oklch(1.00 0 0);
-  --color-bg-hover: oklch(0.96 0.005 260);
+  --color-bg-hover: oklch(0.94 0.005 260);
   --color-bg-nav: oklch(0.15 0.005 260);
   --color-bg-nav-hover: oklch(0.22 0.008 260);
 
-  /* Text */
-  --color-text-primary: oklch(0.18 0.01 260);
-  --color-text-secondary: oklch(0.45 0.015 260);
-  --color-text-muted: oklch(0.60 0.015 260);
+  /* Text — stronger secondary/muted for readability */
+  --color-text-primary: oklch(0.16 0.01 260);
+  --color-text-secondary: oklch(0.40 0.015 260);
+  --color-text-muted: oklch(0.55 0.012 260);
   --color-text-inverse: oklch(0.97 0.005 260);
 
-  /* Borders */
-  --color-border: oklch(0.88 0.008 260);
-  --color-border-hover: oklch(0.78 0.012 260);
+  /* Borders — more visible separation */
+  --color-border: oklch(0.85 0.008 260);
+  --color-border-hover: oklch(0.75 0.012 260);
 
   /* GameStop red accent */
   --color-accent: oklch(0.55 0.24 27);
@@ -56,21 +56,23 @@
 /* ─── Dark Mode Overrides ─── */
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-bg-primary: oklch(0.14 0.008 260);
-    --color-bg-secondary: oklch(0.18 0.01 260);
-    --color-bg-tertiary: oklch(0.22 0.012 260);
-    --color-bg-card: oklch(0.17 0.009 260);
-    --color-bg-hover: oklch(0.22 0.012 260);
+    --color-bg-primary: oklch(0.13 0.008 260);
+    --color-bg-secondary: oklch(0.17 0.01 260);
+    --color-bg-tertiary: oklch(0.21 0.012 260);
+    --color-bg-card: oklch(0.16 0.009 260);
+    --color-bg-hover: oklch(0.20 0.012 260);
     --color-bg-nav: oklch(0.10 0.005 260);
     --color-bg-nav-hover: oklch(0.18 0.008 260);
 
-    --color-text-primary: oklch(0.93 0.008 260);
-    --color-text-secondary: oklch(0.70 0.015 260);
-    --color-text-muted: oklch(0.52 0.012 260);
+    /* Stronger text contrast in dark mode */
+    --color-text-primary: oklch(0.94 0.006 260);
+    --color-text-secondary: oklch(0.72 0.012 260);
+    --color-text-muted: oklch(0.58 0.010 260);
     --color-text-inverse: oklch(0.95 0.005 260);
 
-    --color-border: oklch(0.28 0.012 260);
-    --color-border-hover: oklch(0.38 0.015 260);
+    /* More visible borders in dark mode */
+    --color-border: oklch(0.26 0.012 260);
+    --color-border-hover: oklch(0.36 0.015 260);
 
     --color-accent: oklch(0.62 0.22 27);
     --color-accent-hover: oklch(0.58 0.22 27);

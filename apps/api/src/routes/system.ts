@@ -59,11 +59,24 @@ systemRoutes.get("/health", async (c) => {
 
   // Stale if predictions older than 36 hours (or no predictions at all)
   const isStale = hoursSincePrediction === null || hoursSincePrediction > 36;
+  const hasTrainedModel = !!predictionMeta?.model_version && predictionMeta.model_version !== "unknown";
   const driftStatus = (latestMonitoring?.drift_status as string | null) || "unknown";
-  const degradedByDrift = driftStatus === "degraded";
+
+  // Pipeline status: only factor in drift if we have a real trained model.
+  // Statistical fallback will always have high MDAPE — that's expected, not degraded.
+  let overallStatus: string;
+  if (isStale) {
+    overallStatus = "degraded";
+  } else if (hasTrainedModel && driftStatus === "degraded") {
+    overallStatus = "degraded";
+  } else if (hasTrainedModel && driftStatus === "warning") {
+    overallStatus = "warning";
+  } else {
+    overallStatus = "healthy";
+  }
 
   return c.json({
-    status: isStale || degradedByDrift ? "degraded" : driftStatus === "warning" ? "warning" : "healthy",
+    status: overallStatus,
     predictions: {
       stale: isStale,
       latestPredictionAt: latestPredAt,
