@@ -59,6 +59,7 @@ export async function recordModelMonitoringSnapshot(
        WHERE po.sale_date >= date('now', '-30 days')
          AND po.is_anomaly = 0
          AND mp.model_version != 'statistical-v1'
+         AND po.price_usd >= 10
      )
      SELECT COUNT(*) as sample_size,
             AVG(pct_err) as mdape,
