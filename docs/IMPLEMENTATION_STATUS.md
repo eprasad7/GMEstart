@@ -35,8 +35,10 @@ The core data pipeline (ingestion, anomaly detection, feature computation, predi
 | Card search                   | Implemented     | `src/routes/cards.ts`       | LIKE-based search on name, player, set |
 | Card CRUD                     | Implemented     | `src/routes/cards.ts`       | Single + bulk upsert |
 | CORS + logging middleware     | Implemented     | `src/index.ts`              | |
-| API authentication            | Not started     |                             | No auth — open endpoints |
-| Rate limiting                 | Not started     |                             | |
+| API key authentication        | Implemented     | `src/middleware/auth.ts`    | `X-API-Key` header, skipped in dev mode |
+| Rate limiting                 | Implemented     | `src/middleware/auth.ts`    | KV-based, 120 req/min per key, `429` + headers |
+| Agent REST endpoints          | Implemented     | `src/routes/agents.ts`      | 12 endpoints under `/v1/agents/*` |
+| Agent WebSocket/RPC routing   | Implemented     | `src/index.ts`              | `routeAgentRequest()` for Agents SDK clients |
 
 ## Data Ingestion
 
@@ -93,8 +95,9 @@ The core data pipeline (ingestion, anomaly detection, feature computation, predi
 | MLflow integration               | Implemented | `train.py`                     | Logs params, metrics, iterations |
 | Conformal calibration            | Partially implemented | `conformal.py` + `train.py` | In repo and used during evaluation, but correction is not auto-persisted into scoring |
 | Batch scoring to R2              | Implemented | `batch_score.py`               | Writes `batch_predictions.json` for Worker serving |
-| Training data export from D1     | Not started |                                | Need a script to export feature_store + prices to CSV |
-| Automated retraining pipeline    | Not started |                                | Spec calls for weekly retrain via Airflow; no automation exists |
+| Training data export from D1     | Implemented | `export_features.py`           | Queries D1 via Cloudflare REST API, exports features.csv + training_data.csv |
+| End-to-end pipeline script       | Implemented | `scripts/run_pipeline.sh`      | train → ONNX export → batch score → R2 upload in one command |
+| Automated retraining schedule    | Not started |                                | Pipeline script exists but must be triggered manually (no cron/CI) |
 
 ## Anomaly Detection
 
@@ -120,6 +123,18 @@ The core data pipeline (ingestion, anomaly detection, feature computation, predi
 | SentimentGauge    | Implemented           | `components/SentimentGauge.tsx` | Sentiment bar and trend stats |
 | StatCard          | Implemented           | `components/StatCard.tsx` | Shared summary card component |
 
+## Agentic Layer (Cloudflare Agents SDK + Durable Objects)
+
+| Component                      | Status      | File                                    | Notes |
+|--------------------------------|-------------|-----------------------------------------|-------|
+| PriceMonitorAgent              | Implemented | `src/agents/price-monitor.ts`           | Every 15 min: price spike/crash detection (1d vs 30d >30%), viral social (>3x normal mentions in 6h), KV cache invalidation |
+| MarketIntelligenceAgent        | Implemented | `src/agents/market-intelligence.ts`     | Daily 7am: AI-generated market briefing via Llama 3.1 8B, stores last 30 reports |
+| CompetitorTrackerAgent         | Implemented | `src/agents/competitor-tracker.ts`      | Every 6h: compares fair values against PriceCharting/CardHedger data, flags >15% gaps |
+| PricingRecommendationAgent     | Implemented | `src/agents/pricing-recommendation.ts`  | Daily 8am: BUY/SELL/REPRICE recommendations with human approval queue, 48h expiry |
+| Agent REST API routes          | Implemented | `src/routes/agents.ts`                  | 12 endpoints under `/v1/agents/*` via DO stub.fetch() |
+| Wrangler DO bindings           | Implemented | `wrangler.jsonc`                        | 4 DO bindings + `new_sqlite_classes` migration tag v1 |
+| Agent WebSocket/RPC            | Implemented | `src/index.ts`                          | `routeAgentRequest()` for Agents SDK native clients |
+
 ## Infrastructure & Operations
 
 | Component                          | Status       | Notes |
@@ -128,8 +143,12 @@ The core data pipeline (ingestion, anomaly detection, feature computation, predi
 | Wrangler config (all bindings)     | Implemented  | `wrangler.jsonc` — needs real IDs before deploy |
 | Cron trigger routing               | Implemented  | All 8 crons routed in `scheduler.ts` |
 | Ingestion logging                  | Implemented  | `ingestion_log` table, started/completed/failed |
-| CI/CD pipeline                     | Not started  | |
-| Monitoring / alerting              | Not started  | Spec calls for Cloudflare Analytics Engine; Workers built-in analytics available but no custom dashboards or paging |
+| CI pipeline (GitHub Actions)       | Implemented  | `.github/workflows/ci.yml` — typecheck API + web, run Vitest tests, Python syntax check |
+| API tests (Vitest)                 | Implemented  | `apps/api/test/` — 5 test files: auth, dedup, NRV, params, scheduler |
+| System routes (health/model/rollback/bootstrap) | Implemented | `src/routes/system.ts` — pipeline health, model metadata, prediction rollback, catalog bootstrap |
+| Card catalog bootstrap             | Implemented  | `src/services/ingestion/bootstrap.ts` — PriceCharting CSV from R2 → card_catalog |
+| Production environment config      | Implemented  | `wrangler.jsonc` — `--env production` with custom domain routing, `deploy:prod` script |
+| Monitoring / alerting              | Partially implemented | `/v1/system/health` endpoint reports prediction freshness + ingestion status. No external paging or dashboards. |
 | Structured logging                 | Not started  | Uses `console.error` |
 | D1 data archival to R2             | Not started  | Spec notes 10GB D1 limit — plan for archival at ~6 months. Old observations → R2 as Parquet/CSV |
 | Backup / disaster recovery         | Not started  | D1 has automatic backups; no tested restore process |
@@ -140,10 +159,10 @@ All items below are listed as **required before production deployment** in the u
 
 | Requirement                         | Status      | Notes |
 |-------------------------------------|-------------|-------|
-| API authentication (Cloudflare Access or API key) | Not started | All `/v1/*` endpoints are open |
+| API key authentication              | Implemented | `X-API-Key` header on all `/v1/*` routes. Skipped when `ENVIRONMENT=development`. New `API_KEY` secret. |
+| Rate limiting                       | Implemented | KV-based sliding window, 120 req/min per key. Returns `429` with `X-RateLimit-Remaining` header. |
 | GameStop SSO for dashboard          | Not started | |
 | CORS lockdown to GameStop domains   | Not started | Currently `cors("*")` in `src/index.ts` |
-| Rate limiting                       | Not started | Spec suggests Cloudflare rate limiting rules or KV-based throttling |
 | `seller_id` hashing before storage  | Not started | Currently stored as plaintext from SoldComps |
 | Secrets management                  | Implemented | All API keys configured via `wrangler secret put` |
 | D1 access restriction               | Implemented | Only accessible via Worker bindings, no public endpoint |
@@ -152,19 +171,19 @@ All items below are listed as **required before production deployment** in the u
 
 ## Biggest Gaps
 
-1. **Security and authentication.** The updated spec (section 7.1.1) lists API auth, CORS lockdown, rate limiting, and `seller_id` hashing as required before production. None are implemented. Currently all endpoints are open with `cors("*")`.
+1. **CORS lockdown and remaining security.** API key auth and rate limiting are implemented, but CORS is still `cors("*")`, `seller_id` is stored as plaintext, and GameStop SSO for the dashboard is not started.
 
-2. **Operationalizing the batch-scoring path.** The R2 serving path now works in code, but producing and uploading `batch_predictions.json` is still an external/manual step. Production needs a scheduled scorer job and artifact promotion flow.
+2. **Operationalizing the batch-scoring path.** The full pipeline (export → train → score → upload) works via `run_pipeline.sh` but is manual. Production needs a scheduled job (CI cron, Modal, or Railway) and an artifact promotion/rollback flow.
 
-3. **Historical data backfill.** The database is empty. Need to bootstrap `card_catalog` and backfill `price_observations` from PriceCharting CSV exports or SoldComps historical queries.
+3. **Conformal correction handoff.** Conformal calibration runs during evaluation, but the correction factor is not automatically persisted from training into `batch_score.py` for production scoring.
 
-4. **Training data pipeline.** No script exists to export D1 data → CSV for the Python training pipeline. This is the bridge between the ingested data and model training. Spec notes Modal/Railway as training compute options.
+4. **Historical price backfill.** The card catalog can now be bootstrapped via `POST /v1/system/bootstrap` (reads PriceCharting CSV from R2). However, `price_observations` still needs historical backfill from SoldComps or PriceCharting exports.
 
-5. **Conformal correction handoff.** Conformal evaluation exists, but the correction is not automatically persisted from training into `batch_score.py`.
+5. **D1 data archival.** The spec notes the 10GB D1 limit and calls for archiving old observations to R2 (Parquet/CSV) at approximately the 6-month mark. No archival logic exists.
 
-6. **D1 data archival.** The spec notes the 10GB D1 limit and calls for archiving old observations to R2 (Parquet/CSV) at approximately the 6-month mark. No archival logic exists.
+6. **Source-specific dedup/data contracts.** The prototype deduplicates by `listing_url` and `post_url`, but production needs per-source rules so sold listings, aggregated daily prices, and sentiment events are not conflated.
 
-7. **Source-specific dedup/data contracts.** The prototype now deduplicates by `listing_url` and `post_url`, but production needs per-source rules so sold listings, aggregated daily prices, and sentiment events are not conflated.
+7. **Agent testing and validation.** The 4 Durable Object agents are implemented but have no tests and limited validation against production data patterns. The PriceMonitorAgent overlaps with the existing cron-based anomaly detection — the relationship between them (complementary or replacement) should be clarified.
 
 ## Spec vs. Code Discrepancy: Cron Schedule Order
 

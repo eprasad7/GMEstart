@@ -4,6 +4,24 @@ Base URL: `https://<worker>.workers.dev/v1`
 
 All responses are JSON. Errors return `{ "error": "<message>" }` with an appropriate HTTP status code.
 
+## Authentication
+
+All `/v1/*` endpoints require an `X-API-Key` header in production (`ENVIRONMENT != "development"`).
+
+```
+X-API-Key: <your-api-key>
+```
+
+| Status | When |
+|--------|------|
+| 401    | Missing `X-API-Key` header |
+| 403    | Invalid API key |
+| 429    | Rate limit exceeded (120 requests/min per key) |
+
+Rate limit headers are returned on every response:
+- `X-RateLimit-Limit: 120`
+- `X-RateLimit-Remaining: <n>`
+
 ---
 
 ## Health Check
@@ -515,6 +533,197 @@ GET /v1/market/movers?direction=up&days=7&limit=20
 
 ---
 
+## Agents
+
+Four Durable Object agents provide autonomous capabilities. Each exposes REST endpoints under `/v1/agents/` and also supports direct Agents SDK WebSocket/RPC connections.
+
+### Price Monitor
+
+```
+GET  /v1/agents/monitor/status
+```
+Returns last check time, active alert count, total checks and anomalies detected.
+
+```
+POST /v1/agents/monitor/check
+```
+Triggers an immediate monitoring check. Returns `{ alertsFound, total }`.
+
+### Market Intelligence
+
+```
+GET  /v1/agents/intelligence/latest
+```
+Returns the latest AI-generated market report (summary, highlights, top gainers/decliners, market sentiment).
+
+```
+GET  /v1/agents/intelligence/history?count=7
+```
+Returns the last N reports.
+
+```
+POST /v1/agents/intelligence/generate
+```
+Generates a new market report immediately. Returns the full `MarketReport` object.
+
+### Competitor Tracker
+
+```
+GET  /v1/agents/competitors/status
+```
+Returns scan count, current gap count, overpriced/underpriced breakdown.
+
+```
+GET  /v1/agents/competitors/gaps
+```
+Returns all price gaps sorted by magnitude.
+
+```
+GET  /v1/agents/competitors/overpriced
+GET  /v1/agents/competitors/underpriced
+```
+Returns cards where GameStop's fair value is >15% above or below competitor prices.
+
+```
+POST /v1/agents/competitors/scan
+```
+Triggers an immediate competitor scan. Returns `{ gaps, scanned }`.
+
+### Pricing Recommendations
+
+```
+GET  /v1/agents/recommendations/pending?action=BUY
+```
+Returns pending recommendations. Optional `action` filter: `BUY`, `SELL`, `REPRICE`.
+
+**Response** `200`
+```json
+{
+  "recommendations": [
+    {
+      "id": "rec-1713100000-abc123",
+      "cardId": "pokemon-base-set-4",
+      "cardName": "Charizard",
+      "grade": "10",
+      "gradingCompany": "PSA",
+      "action": "BUY",
+      "currentPrice": 150.00,
+      "recommendedPrice": 150.00,
+      "fairValue": 245.00,
+      "nrv": 199.50,
+      "expectedMargin": 24.6,
+      "confidence": "HIGH",
+      "reasoning": "Market price $150.00 is below max buy price $159.60...",
+      "status": "pending",
+      "createdAt": "2026-04-14T08:00:00.000Z",
+      "resolvedAt": null,
+      "resolvedBy": null
+    }
+  ]
+}
+```
+
+```
+POST /v1/agents/recommendations/:id/approve
+Content-Type: application/json
+{ "approvedBy": "analyst@gamestop.com" }
+```
+Approves a recommendation. Moves it from pending to history.
+
+```
+POST /v1/agents/recommendations/:id/reject
+Content-Type: application/json
+{ "rejectedBy": "analyst@gamestop.com" }
+```
+Rejects a recommendation.
+
+```
+GET  /v1/agents/recommendations/history?limit=20
+```
+Returns resolved (approved/rejected/expired) recommendations.
+
+```
+GET  /v1/agents/recommendations/status
+```
+Returns pending count by action type and approval/rejection stats.
+
+```
+POST /v1/agents/recommendations/generate
+```
+Generates recommendations from latest predictions immediately.
+
+---
+
+## System
+
+Operational endpoints for monitoring, model management, and data bootstrapping.
+
+### Pipeline Health
+
+```
+GET /v1/system/health
+```
+
+Returns prediction freshness, model version, ingestion status, and catalog size. Marks status as `degraded` if predictions are older than 36 hours.
+
+**Response** `200`
+```json
+{
+  "status": "healthy",
+  "predictions": {
+    "stale": false,
+    "latestPredictionAt": "2026-04-14T06:00:00.000Z",
+    "hoursSincePrediction": 8.2,
+    "r2Meta": {
+      "version": "2026-04-14T060000Z",
+      "model_version": "lightgbm-q7-v1.0.0",
+      "conformal_correction": 0.12,
+      "cards_scored": 4850,
+      "scored_at": "2026-04-14T05:30:00.000Z"
+    }
+  },
+  "catalog": { "totalCards": 5000 },
+  "ingestion": {
+    "recentRuns": [
+      { "source": "soldcomps", "status": "completed", "records": 147, "at": "2026-04-14T14:15:00.000Z" }
+    ]
+  }
+}
+```
+
+### Model Metadata
+
+```
+GET /v1/system/model
+```
+
+Returns the `predictions_meta.json` from R2 (written by `batch_score.py`).
+
+### Model Rollback
+
+```
+POST /v1/system/rollback
+Content-Type: application/json
+{ "version_key": "models/versions/batch_predictions_2026-04-13T060000Z.json" }
+```
+
+Copies a versioned prediction file from R2 back to the latest `models/batch_predictions.json`. The Worker will pick up the rolled-back predictions within 5 minutes (R2 metadata cache TTL).
+
+### Bootstrap Card Catalog
+
+```
+POST /v1/system/bootstrap
+```
+
+Populates `card_catalog` from a PriceCharting CSV pre-uploaded to R2 at `bootstrap/pricecharting_catalog.csv`. Maps PriceCharting console names to category enums and generates deterministic card IDs.
+
+**Response** `200`
+```json
+{ "status": "ok", "imported": 4850 }
+```
+
+---
+
 ## Error Shapes
 
 All errors follow the same shape:
@@ -526,5 +735,8 @@ All errors follow the same shape:
 | Status | When |
 |--------|------|
 | 400    | Missing or invalid request parameters |
+| 401    | Missing `X-API-Key` header (production only) |
+| 403    | Invalid API key |
 | 404    | Card not found, or insufficient data for evaluation |
+| 429    | Rate limit exceeded (120 req/min per key) |
 | 500    | Internal error (D1 query failure, external API error) |

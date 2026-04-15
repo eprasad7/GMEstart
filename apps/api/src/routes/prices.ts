@@ -78,19 +78,25 @@ priceRoutes.get("/:cardId", async (c) => {
           : "stable"
       : "stable";
 
+  const hasPrediction = !!prediction;
+  const fairValue = (prediction?.fair_value as number) || ma30d;
+
   const response: PriceResponse = {
     card_id: cardId,
     card_name: (card?.name as string) || cardId,
     grade,
     grading_company: gradingCompany,
-    price: (prediction?.fair_value as number) || ma30d,
+    price: fairValue,
     lower: (prediction?.p10 as number) || ma30d * 0.8,
     upper: (prediction?.p90 as number) || ma30d * 1.2,
+    buy_threshold: (prediction?.buy_threshold as number) || 0,
+    sell_threshold: (prediction?.sell_threshold as number) || 0,
     confidence: (prediction?.confidence as "HIGH" | "MEDIUM" | "LOW") || "LOW",
     last_sale: (salesStats?.last_sale as string) || null,
     sales_30d: (salesStats?.sales_30d as number) || 0,
     trend: trend as "rising" | "stable" | "falling",
-    updated_at: (prediction?.predicted_at as string) || new Date().toISOString(),
+    updated_at: (prediction?.predicted_at as string) || null,
+    has_prediction: hasPrediction,
   };
 
   // Cache for 5 minutes

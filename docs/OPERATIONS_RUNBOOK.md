@@ -5,11 +5,14 @@
 ### Deploy API
 
 ```bash
-cd apps/api
-wrangler deploy
+# Development
+pnpm deploy:api
+
+# Production (uses --env production with custom domain routing)
+pnpm --filter api deploy:prod
 ```
 
-This deploys the Worker, cron triggers, and queue consumers in one step. Wrangler reads `wrangler.jsonc` for all bindings.
+This deploys the Worker, cron triggers, queue consumers, and Durable Object agents in one step. Wrangler reads `wrangler.jsonc` for all bindings. Production secrets must be set with `--env production`.
 
 ### Deploy Dashboard
 
@@ -54,6 +57,7 @@ wrangler pages deploy dist/
 6. **Set secrets:**
    ```bash
    cd apps/api
+   wrangler secret put API_KEY
    wrangler secret put SOLDCOMPS_API_KEY
    wrangler secret put PRICECHARTING_API_KEY
    wrangler secret put REDDIT_CLIENT_ID
@@ -102,11 +106,28 @@ wrangler d1 migrations list gamecards-db --remote
 
 ### Bootstrap Card Catalog
 
-Cards must exist in `card_catalog` before any ingestion runs. Use the bulk upsert endpoint:
+Cards must exist in `card_catalog` before any ingestion runs. Two options:
+
+**Option A: PriceCharting CSV bootstrap (recommended)**
+
+1. Download or export the PriceCharting product catalog as CSV.
+2. Upload to R2:
+   ```bash
+   wrangler r2 object put gamecards-data/bootstrap/pricecharting_catalog.csv --file pricecharting_catalog.csv
+   ```
+3. Trigger bootstrap:
+   ```bash
+   curl -X POST https://<worker>.workers.dev/v1/system/bootstrap \
+     -H "X-API-Key: $API_KEY"
+   ```
+   Returns `{ "status": "ok", "imported": 4850 }`.
+
+**Option B: Bulk upsert API**
 
 ```bash
 curl -X POST https://<worker>.workers.dev/v1/cards/bulk \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
   -d '{
     "cards": [
       {
@@ -270,15 +291,38 @@ Expected files:
 - `models/lightgbm_q0.10.onnx` through `models/lightgbm_q0.90.onnx` — per-quantile models
 - `models/batch_predictions.json` — pre-scored serving artifact consumed by the Worker
 
+### Roll Back to a Previous Prediction Version
+
+The batch scorer writes versioned prediction files to `models/versions/` in R2. To roll back:
+
+```bash
+# List available versions
+wrangler r2 object list gamecards-models --prefix models/versions/
+
+# Roll back via API
+curl -X POST https://<worker>.workers.dev/v1/system/rollback \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
+  -d '{ "version_key": "models/versions/batch_predictions_2026-04-13T060000Z.json" }'
+```
+
+The Worker picks up the rolled-back predictions within 5-10 minutes (R2 metadata cache TTL).
+
 ### Roll Back to Statistical Fallback
 
-If a deployed model performs poorly, delete the batch prediction artifact from R2. The Worker will fall back to statistical estimation:
+If all model versions are bad, delete the predictions file entirely. The Worker falls back to statistical estimation:
 
 ```bash
 wrangler r2 object delete gamecards-models --key models/batch_predictions.json
 ```
 
-The in-memory cache will expire within 10 minutes and the Worker will stop using batch-scored predictions.
+### Check Pipeline Health
+
+```bash
+curl https://<worker>.workers.dev/v1/system/health -H "X-API-Key: $API_KEY"
+```
+
+Returns prediction freshness, model version, recent ingestion runs, and catalog size. Status is `degraded` if predictions are older than 36 hours.
 
 ## D1 Data Archival
 

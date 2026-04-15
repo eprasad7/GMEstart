@@ -16,7 +16,8 @@ All estimates assume the **Workers Paid plan** ($5/mo base) and a catalog of **~
 | R2             | $0.00                 | Free tier covers model artifacts |
 | Queues         | $0.00 - $0.40        | ~1M ops/mo, within or near included |
 | Workers AI     | $3.00 - $12.00       | Sentiment + NER, main variable cost |
-| **Cloudflare total** | **$8 - $18/mo** | |
+| Durable Objects| $0.00 - $1.00        | 4 agents, minimal request + storage |
+| **Cloudflare total** | **$8 - $19/mo** | |
 | SoldComps API  | $59.00               | External — licensed eBay data |
 | PriceCharting  | $15 - $30            | External — aggregated prices |
 | Reddit API     | $0.00                | Free tier (100 RPM sufficient) |
@@ -146,6 +147,24 @@ With keyword pre-filtering (recommended):
 Without pre-filtering:
 
 **Cost: $20 - $25/mo**
+
+### Durable Objects (Agents)
+
+**Pricing:** First 1M requests/mo and 1 GB storage included in Workers Paid plan. Overage: $0.15/M requests, $0.20/GB-mo.
+
+4 agents with minimal usage:
+
+| Agent | Requests/mo | Storage |
+|-------|------------:|---------|
+| PriceMonitorAgent | ~2,880 (every 15min) + API calls | < 1 MB state |
+| MarketIntelligenceAgent | ~30 (daily) + API calls | ~100 KB (30 reports) |
+| CompetitorTrackerAgent | ~120 (every 6h) + API calls | < 1 MB state |
+| PricingRecommendationAgent | ~30 (daily) + expiry checks + API calls | < 1 MB state |
+| **Total** | ~5K-10K | < 5 MB |
+
+Well within included limits. The MarketIntelligenceAgent also makes one Workers AI call per report (~30/mo), adding negligible Neurons.
+
+**Cost: $0.00** (included in Workers Paid plan)
 
 ---
 

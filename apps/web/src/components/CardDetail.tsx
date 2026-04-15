@@ -82,8 +82,11 @@ export function CardDetail({ card, onBack }: CardDetailProps) {
               {price && (
                 <>
                   <TrustBadge variant={getConfidenceBadge(price.confidence)} />
-                  <TrustBadge variant={getFreshnessBadge(price.updated_at)} />
+                  <TrustBadge variant={getFreshnessBadge(price.has_prediction ? price.updated_at : null)} />
                   <TrustBadge {...getCompsBadge(price.sales_30d)} />
+                  {!price.has_prediction && (
+                    <TrustBadge variant="manual-review" detail="No ML prediction" />
+                  )}
                 </>
               )}
               {sentiment && sentiment.trend === "spiking" && (
@@ -157,18 +160,32 @@ export function CardDetail({ card, onBack }: CardDetailProps) {
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Fair Value</p>
               <p className="mt-0.5 text-3xl font-extrabold text-text-primary">${price.price.toFixed(2)}</p>
+              <p className="text-[11px] text-text-muted">90% CI: ${price.lower.toFixed(0)}–${price.upper.toFixed(0)}</p>
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Max Buy Price</p>
-              <p className="mt-0.5 text-lg font-bold text-buy">${price.lower.toFixed(0)}</p>
-              <p className="text-[11px] text-text-muted">Below this = strong buy</p>
+              {price.buy_threshold > 0 ? (
+                <>
+                  <p className="mt-0.5 text-lg font-bold text-buy">${price.buy_threshold.toFixed(0)}</p>
+                  <p className="text-[11px] text-text-muted">Below this = strong buy</p>
+                </>
+              ) : (
+                <>
+                  <p className="mt-0.5 text-lg font-bold text-text-muted">--</p>
+                  <p className="text-[11px] text-text-muted">No model prediction</p>
+                </>
+              )}
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Expected Margin</p>
-              <p className={`mt-0.5 text-lg font-bold ${price.price > price.lower ? "text-buy" : "text-sell"}`}>
-                {price.lower > 0 ? `${(((price.price - price.lower) / price.lower) * 100).toFixed(0)}%` : "--"}
-              </p>
-              <p className="text-[11px] text-text-muted">Buy at lower, sell at fair</p>
+              {price.buy_threshold > 0 ? (
+                <p className={`mt-0.5 text-lg font-bold ${price.price > price.buy_threshold ? "text-buy" : "text-sell"}`}>
+                  {`${(((price.price - price.buy_threshold) / price.buy_threshold) * 100).toFixed(0)}%`}
+                </p>
+              ) : (
+                <p className="mt-0.5 text-lg font-bold text-text-muted">--</p>
+              )}
+              <p className="text-[11px] text-text-muted">Buy at threshold, sell at fair</p>
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Trend</p>
@@ -238,9 +255,9 @@ export function CardDetail({ card, onBack }: CardDetailProps) {
             )}
             <ExplainerRow
               label="Data Freshness"
-              value={price.updated_at ? new Date(price.updated_at).toLocaleDateString() : "Unknown"}
+              value={price.has_prediction && price.updated_at ? new Date(price.updated_at).toLocaleDateString() : price.has_prediction ? "Unknown" : "No model — using sales average"}
               detail={price.last_sale ? `Last sale: ${new Date(price.last_sale).toLocaleDateString()}` : "No recent transaction data"}
-              signal={getFreshnessBadge(price.updated_at) === "fresh" ? "up" : "down"}
+              signal={price.has_prediction && getFreshnessBadge(price.updated_at) === "fresh" ? "up" : "down"}
             />
           </div>
         </div>
@@ -282,7 +299,7 @@ export function CardDetail({ card, onBack }: CardDetailProps) {
                     {compareMode === "grade" ? "Grade" : "Company"}
                   </th>
                   <th className="pb-2 px-4 text-right text-xs font-semibold uppercase text-text-muted">Fair Value</th>
-                  <th className="pb-2 px-4 text-right text-xs font-semibold uppercase text-text-muted">Range</th>
+                  <th className="pb-2 px-4 text-right text-xs font-semibold uppercase text-text-muted">Max Buy</th>
                   <th className="pb-2 px-4 text-right text-xs font-semibold uppercase text-text-muted">Sales (30d)</th>
                   <th className="pb-2 px-4 text-right text-xs font-semibold uppercase text-text-muted">Trend</th>
                   <th className="pb-2 pl-4 text-right text-xs font-semibold uppercase text-text-muted">Confidence</th>
@@ -322,7 +339,7 @@ export function CardDetail({ card, onBack }: CardDetailProps) {
                       ) : (
                         <>
                           <td className="py-2.5 px-4 text-right font-bold text-text-primary">${p.price.toFixed(0)}</td>
-                          <td className="py-2.5 px-4 text-right text-text-secondary">${p.lower.toFixed(0)}–${p.upper.toFixed(0)}</td>
+                          <td className="py-2.5 px-4 text-right text-buy">{p.buy_threshold > 0 ? `$${p.buy_threshold.toFixed(0)}` : "--"}</td>
                           <td className="py-2.5 px-4 text-right text-text-secondary">{p.sales_30d}</td>
                           <td className={`py-2.5 px-4 text-right capitalize ${p.trend === "rising" ? "text-buy" : p.trend === "falling" ? "text-sell" : "text-text-secondary"}`}>
                             {p.trend}
@@ -352,8 +369,8 @@ export function CardDetail({ card, onBack }: CardDetailProps) {
             <PriceChart
               sales={history?.sales || []}
               fairValue={price?.price}
-              buyThreshold={price?.lower}
-              sellThreshold={price?.upper}
+              buyThreshold={price?.buy_threshold || undefined}
+              sellThreshold={price?.sell_threshold || undefined}
               onRangeChange={setHistoryDays}
             />
           )}

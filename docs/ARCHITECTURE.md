@@ -38,7 +38,7 @@ GameCards runs entirely on Cloudflare's platform: a single Worker handles the AP
 │    Python ML Training Pipeline          │    │   React Dashboard      │
 │    LightGBM quantile regression         │    │   Vite + TanStack Query│
 │    ONNX export + batch score → R2       │    │   Recharts + Tailwind  │
-│    Walk-forward backtest + MLflow       │    │   Reads /v1/* API      │
+│    Conformal calibration + MLflow       │    │   Reads /v1/* API      │
 └─────────────────────────────────────────┘    └────────────────────────┘
 ```
 
@@ -127,15 +127,33 @@ All jobs log to `ingestion_log` with status, record count, and error messages.
 
 **Monitoring: Cloudflare Analytics Engine.** The spec moved from Grafana + Prometheus to Cloudflare's built-in Analytics Engine plus the `ingestion_log` table for pipeline health. Workers analytics provide request metrics, error rates, and CPU time out of the box.
 
-## Security Requirements
+## Agentic Layer (Cloudflare Agents SDK)
 
-The spec (section 7.1.1) defines these as required before production deployment:
+Four Durable Object agents provide stateful, autonomous capabilities beyond the cron-based pipeline. They use the [Cloudflare Agents SDK](https://developers.cloudflare.com/agents/) and are backed by DO-native SQLite for persistent state.
 
-- **API authentication:** Cloudflare Access or API key middleware on all `/v1/*` routes. Dashboard requires GameStop SSO.
-- **CORS restriction:** Lock to GameStop domains only (the current `cors("*")` must be replaced).
-- **Rate limiting:** Cloudflare rate limiting rules or KV-based per-key throttling.
-- **Secrets management:** All API keys via `wrangler secret put`, never in code or `.env`.
-- **Data privacy:** `seller_id` should be hashed before storage. Reddit `post_url` is public data. No PII collected.
-- **D1 access:** Restricted to Workers bindings only — no public database endpoint.
+| Agent | Schedule | Purpose |
+|-------|----------|---------|
+| **PriceMonitorAgent** | Every 15 min | Detects price spikes/crashes (>30% 1d vs 30d) and viral social events (>3x normal mentions in 6h). Triggers immediate KV cache invalidation for affected cards. |
+| **MarketIntelligenceAgent** | Daily 7am | Aggregates market movements, generates an AI-written daily briefing (via Llama 3.1 8B), stores last 30 reports in state. |
+| **CompetitorTrackerAgent** | Every 6 hours | Compares GameStop's fair values against PriceCharting and CardHedger prices. Flags cards where GameStop is >15% above or below market. |
+| **PricingRecommendationAgent** | Daily 8am | Generates BUY/SELL/REPRICE recommendations with a human approval queue. Recommendations expire after 48h. Tracks approval/rejection history. |
 
-None of these are implemented yet. See [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
+Agents are exposed via two interfaces:
+- **REST API** at `/v1/agents/*` — routed through `src/routes/agents.ts` using `DurableObjectNamespace.get().fetch()`.
+- **Agents SDK WebSocket/RPC** — routed via `routeAgentRequest()` in `src/index.ts` for real-time agent interaction.
+
+Wrangler config declares 4 DO bindings and a DO migration (`tag: "v1"` with `new_sqlite_classes`).
+
+## Security
+
+The spec (section 7.1.1) defines security requirements for production. Current status:
+
+| Requirement | Status |
+|-------------|--------|
+| **API key authentication** | Implemented — `X-API-Key` header validated against `API_KEY` secret. Skipped in development mode. (`middleware/auth.ts`) |
+| **Rate limiting** | Implemented — KV-based sliding window, 120 requests/min per API key. Returns `429` with `X-RateLimit-Remaining` header. (`middleware/auth.ts`) |
+| **CORS restriction** | Not started — still `cors("*")`. Must lock to GameStop domains. |
+| **GameStop SSO for dashboard** | Not started. |
+| **`seller_id` hashing** | Not started — stored as plaintext. |
+| **Secrets management** | Implemented — all keys via `wrangler secret put`. |
+| **D1 access restriction** | Implemented — Workers bindings only. |

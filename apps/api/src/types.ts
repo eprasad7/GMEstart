@@ -146,11 +146,14 @@ export interface PriceResponse {
   price: number;
   lower: number;
   upper: number;
+  buy_threshold: number;
+  sell_threshold: number;
   confidence: "HIGH" | "MEDIUM" | "LOW";
   last_sale: string | null;
   sales_30d: number;
   trend: "rising" | "stable" | "falling";
-  updated_at: string;
+  updated_at: string | null;
+  has_prediction: boolean;
 }
 
 export interface EvaluateRequest {

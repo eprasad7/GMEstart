@@ -15,12 +15,16 @@ packages/ml-training/  Python ML pipeline — LightGBM quantile regression, ONNX
 | Binding            | Service | Purpose                              |
 |--------------------|---------|--------------------------------------|
 | `DB`               | D1      | SQLite database (12 tables)          |
-| `PRICE_CACHE`      | KV      | Hot price cache (5-min TTL)          |
+| `PRICE_CACHE`      | KV      | Hot price cache, rate limiting       |
 | `MODELS`           | R2      | ONNX model artifacts                 |
 | `DATA_ARCHIVE`     | R2      | Raw data exports                     |
 | `INGESTION_QUEUE`  | Queue   | Async price observation processing   |
 | `SENTIMENT_QUEUE`  | Queue   | Async sentiment analysis via Workers AI |
 | `AI`               | Workers AI | Sentiment classification, NER       |
+| `PriceMonitorAgent` | Durable Object | Real-time price anomaly detection |
+| `MarketIntelligenceAgent` | Durable Object | AI-generated daily market briefs |
+| `CompetitorTrackerAgent` | Durable Object | Cross-platform price comparison |
+| `PricingRecommendationAgent` | Durable Object | Buy/sell/reprice approval queue |
 
 ## Quick Start
 
@@ -73,9 +77,11 @@ pnpm deploy:web    # Cloudflare Pages (or Vite build + static host)
 |---------------------|--------------------------------------|
 | `pnpm dev:api`      | Start API dev server (Wrangler)      |
 | `pnpm dev:web`      | Start dashboard dev server (Vite)    |
-| `pnpm deploy:api`   | Deploy API to Cloudflare Workers     |
+| `pnpm deploy:api`   | Deploy API to Cloudflare Workers (dev) |
+| `pnpm --filter api deploy:prod` | Deploy API to production   |
 | `pnpm deploy:web`   | Deploy dashboard                     |
 | `pnpm db:migrate`   | Run D1 migrations locally            |
+| `pnpm --filter api test` | Run API tests (Vitest)          |
 | `pnpm typecheck`    | Typecheck all packages               |
 
 ### ML Training Pipeline
@@ -83,6 +89,14 @@ pnpm deploy:web    # Cloudflare Pages (or Vite build + static host)
 ```bash
 cd packages/ml-training
 pip install -e .
+
+# Export features and training data from D1
+gamecards-export-features \
+  --account-id YOUR_CF_ACCOUNT_ID \
+  --database-id YOUR_D1_DATABASE_ID \
+  --api-token YOUR_CF_API_TOKEN \
+  --output-features features.csv \
+  --output-training training_data.csv
 
 # Train models
 gamecards-train --data training_data.csv --output models/
@@ -92,6 +106,12 @@ gamecards-backtest --data training_data.csv
 
 # Export to ONNX and upload to R2
 gamecards-export --model-dir models/ --output onnx_models/ --upload
+
+# Batch-score all cards and upload to R2
+gamecards-score --model-dir models/ --features features.csv --upload
+
+# Or run the full pipeline in one shot:
+./scripts/run_pipeline.sh training_data.csv features.csv
 ```
 
 ## Environment Variables
@@ -100,12 +120,15 @@ gamecards-export --model-dir models/ --output onnx_models/ --upload
 
 | Variable                  | Description                       |
 |---------------------------|-----------------------------------|
+| `API_KEY`                 | API authentication key (required in production) |
 | `SOLDCOMPS_API_KEY`       | SoldComps API token               |
 | `PRICECHARTING_API_KEY`   | PriceCharting API token           |
 | `CARDHEDGER_API_KEY`      | CardHedger API token (future)     |
 | `REDDIT_CLIENT_ID`        | Reddit OAuth app client ID        |
 | `REDDIT_CLIENT_SECRET`    | Reddit OAuth app client secret    |
 | `POKEMON_PRICE_TRACKER_KEY` | PokemonPriceTracker API key (future) |
+
+**Authentication:** All `/v1/*` endpoints require an `X-API-Key` header in production. Skipped when `ENVIRONMENT=development`. Rate limited to 120 requests/min per key.
 
 **Config** (via `wrangler.jsonc` vars):
 
@@ -135,6 +158,18 @@ Base path: `/v1`
 | GET    | `/v1/cards/:id`                  | Get card details               |
 | POST   | `/v1/cards/`                     | Create/upsert card             |
 | POST   | `/v1/cards/bulk`                 | Bulk upsert cards              |
+| GET    | `/v1/agents/monitor/status`      | Price monitor agent status     |
+| POST   | `/v1/agents/monitor/check`       | Trigger monitoring check       |
+| GET    | `/v1/agents/intelligence/latest` | Latest market report           |
+| POST   | `/v1/agents/intelligence/generate` | Generate market report       |
+| GET    | `/v1/agents/competitors/gaps`    | Competitor price gaps          |
+| GET    | `/v1/agents/recommendations/pending` | Pending buy/sell recommendations |
+| POST   | `/v1/agents/recommendations/:id/approve` | Approve a recommendation |
+| POST   | `/v1/agents/recommendations/:id/reject` | Reject a recommendation |
+| GET    | `/v1/system/health`              | Pipeline health + prediction freshness |
+| GET    | `/v1/system/model`               | Current model version metadata |
+| POST   | `/v1/system/rollback`            | Rollback to a previous prediction version |
+| POST   | `/v1/system/bootstrap`           | Bootstrap card catalog from PriceCharting CSV |
 
 See [docs/API_SPEC.md](docs/API_SPEC.md) for full request/response contracts.
 

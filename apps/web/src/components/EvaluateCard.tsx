@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api, type EvaluateResponse, type Card } from "../lib/api";
 import { SearchBar } from "./SearchBar";
 import { TrustBadge, getConfidenceBadge } from "./TrustBadge";
-import { DollarSign, Loader2, Settings2, Calculator } from "lucide-react";
+import { DollarSign, Loader2, Settings2, Calculator, Info } from "lucide-react";
 
 const CHANNELS = [
   { value: "ebay", label: "eBay", defaultFee: 13.25, defaultShipping: 4.5 },
@@ -57,7 +57,7 @@ export function EvaluateCard() {
     }
   };
 
-  // What-if calculations
+  // What-if calculations (client-side only)
   const buyPrice = parseFloat(price) || 0;
   const sellPrice = parseFloat(listPrice) || (result?.fair_value ?? 0);
   const fees = sellPrice * (feeRate / 100);
@@ -76,10 +76,9 @@ export function EvaluateCard() {
 
   return (
     <div className="space-y-4">
-      {/* ─── Input Panel ─── */}
+      {/* ─── Step 1: Card + Price (inputs to model) ─── */}
       <div className="rounded-lg border border-border bg-bg-card p-5 shadow-sm">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {/* Card search */}
           <div className="sm:col-span-2">
             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-text-muted">Card</label>
             {selectedCard ? (
@@ -97,9 +96,8 @@ export function EvaluateCard() {
             )}
           </div>
 
-          {/* Buy price */}
           <div>
-            <label htmlFor="eval-price" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-text-muted">Buy Price</label>
+            <label htmlFor="eval-price" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-text-muted">Offered Price</label>
             <div className="relative">
               <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
               <input
@@ -115,7 +113,6 @@ export function EvaluateCard() {
             </div>
           </div>
 
-          {/* Grade + Company */}
           <div className="flex gap-2">
             <div className="flex-1">
               <label htmlFor="eval-grade" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-text-muted">Grade</label>
@@ -146,95 +143,22 @@ export function EvaluateCard() {
           </div>
         </div>
 
-        {/* Channel + Assumptions */}
-        <div className="mt-4 flex flex-wrap items-end gap-3">
-          <div>
-            <label htmlFor="eval-channel" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-text-muted">Sell Channel</label>
-            <select
-              id="eval-channel"
-              value={channel}
-              onChange={(e) => handleChannelChange(e.target.value)}
-              className="rounded-md border border-border bg-bg-primary px-3 py-2 text-sm text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
-            >
-              {CHANNELS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-            </select>
-          </div>
-
-          <button
-            onClick={() => setShowAssumptions(!showAssumptions)}
-            className={`flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition-colors min-h-[38px] ${
-              showAssumptions ? "bg-bg-tertiary text-text-primary" : "bg-bg-secondary text-text-secondary hover:bg-bg-hover"
-            }`}
-          >
-            <Settings2 className="h-3.5 w-3.5" />
-            Assumptions
-          </button>
-
-          <div className="ml-auto">
-            <button
-              onClick={handleEvaluate}
-              disabled={loading || !selectedCard || !price}
-              className="flex items-center gap-2 rounded-md bg-accent px-5 py-2.5 text-sm font-bold text-text-inverse transition-colors hover:bg-accent-hover disabled:opacity-50 min-h-[44px]"
-            >
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Calculator className="h-4 w-4" />}
-              Evaluate
-            </button>
-          </div>
-        </div>
-
-        {/* Editable Assumptions */}
-        {showAssumptions && (
-          <div className="mt-3 grid gap-3 rounded-md border border-border bg-bg-primary p-3 sm:grid-cols-3">
-            <div>
-              <label htmlFor="eval-fee" className="mb-1 block text-[11px] font-medium text-text-muted">Platform Fee %</label>
-              <input
-                id="eval-fee"
-                type="number"
-                min="0"
-                max="100"
-                step="0.25"
-                value={feeRate}
-                onChange={(e) => setFeeRate(parseFloat(e.target.value) || 0)}
-                className="w-full rounded-md border border-border bg-bg-card px-3 py-1.5 text-sm text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
-              />
-            </div>
-            <div>
-              <label htmlFor="eval-shipping" className="mb-1 block text-[11px] font-medium text-text-muted">Shipping Cost</label>
-              <div className="relative">
-                <DollarSign className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" />
-                <input
-                  id="eval-shipping"
-                  type="number"
-                  min="0"
-                  step="0.50"
-                  value={shippingCost}
-                  onChange={(e) => setShippingCost(parseFloat(e.target.value) || 0)}
-                  className="w-full rounded-md border border-border bg-bg-card py-1.5 pl-7 pr-3 text-sm text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
-                />
-              </div>
-            </div>
-            <div>
-              <label htmlFor="eval-margin" className="mb-1 block text-[11px] font-medium text-text-muted">Target Margin %</label>
-              <input
-                id="eval-margin"
-                type="number"
-                min="0"
-                max="200"
-                step="5"
-                value={targetMargin}
-                onChange={(e) => setTargetMargin(parseFloat(e.target.value) || 0)}
-                className="w-full rounded-md border border-border bg-bg-card px-3 py-1.5 text-sm text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
-              />
-            </div>
-          </div>
-        )}
+        <button
+          onClick={handleEvaluate}
+          disabled={loading || !selectedCard || !price}
+          className="mt-4 flex items-center gap-2 rounded-md bg-accent px-5 py-2.5 text-sm font-bold text-text-inverse transition-colors hover:bg-accent-hover disabled:opacity-50 min-h-[44px]"
+        >
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Calculator className="h-4 w-4" />}
+          Evaluate
+        </button>
 
         {error && <p className="mt-3 text-sm text-danger">{error}</p>}
       </div>
 
-      {/* ─── Decision Result ─── */}
+      {/* ─── Step 2: Model Decision (from API — not affected by channel) ─── */}
       {result && (
         <div className="rounded-lg border border-border bg-bg-card p-5 shadow-sm">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-text-muted">Model Decision</h3>
           <div className="flex flex-wrap items-center gap-3 mb-4">
             <span className={`inline-flex rounded-md border px-4 py-2 text-lg font-extrabold ${decisionStyles[result.decision] || ""}`}>
               {result.decision.replace(/_/g, " ")}
@@ -248,7 +172,7 @@ export function EvaluateCard() {
               <p className="text-lg font-bold text-text-primary">${result.fair_value.toFixed(2)}</p>
             </div>
             <div>
-              <span className="text-xs text-text-muted">API Margin</span>
+              <span className="text-xs text-text-muted">Model Margin</span>
               <p className={`text-lg font-bold ${result.margin > 0 ? "text-buy" : "text-sell"}`}>
                 {result.margin > 0 ? "+" : ""}{result.margin.toFixed(1)}%
               </p>
@@ -259,21 +183,96 @@ export function EvaluateCard() {
             </div>
           </div>
           <p className="text-sm text-text-secondary">{result.reasoning}</p>
+          <p className="mt-2 flex items-center gap-1.5 text-[11px] text-text-muted">
+            <Info className="h-3 w-3" />
+            Uses standard retail economics (13% fee, $5 shipping, 20% margin target). Customize below.
+          </p>
         </div>
       )}
 
-      {/* ─── What-If Scenario ─── */}
-      {buyPrice > 0 && (result || parseFloat(listPrice) > 0) && (
+      {/* ─── Step 3: Your Economics (client-side what-if — clearly separated) ─── */}
+      {result && buyPrice > 0 && (
         <div className="rounded-lg border border-border bg-bg-card p-5 shadow-sm">
-          <h3 className="mb-4 flex items-center gap-2 text-sm font-bold text-text-primary">
-            <Calculator className="h-4 w-4 text-accent" />
-            What-If Scenario
-          </h3>
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">Your Economics</h3>
+            <p className="text-[11px] text-text-muted">These settings affect the numbers below, not the model decision above</p>
+          </div>
+
+          {/* Channel + Assumptions controls */}
+          <div className="mb-4 flex flex-wrap items-end gap-3">
+            <div>
+              <label htmlFor="eval-channel" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-text-muted">Sell Channel</label>
+              <select
+                id="eval-channel"
+                value={channel}
+                onChange={(e) => handleChannelChange(e.target.value)}
+                className="rounded-md border border-border bg-bg-primary px-3 py-2 text-sm text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
+              >
+                {CHANNELS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+            </div>
+
+            <button
+              onClick={() => setShowAssumptions(!showAssumptions)}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition-colors min-h-[38px] ${
+                showAssumptions ? "bg-bg-tertiary text-text-primary" : "bg-bg-secondary text-text-secondary hover:bg-bg-hover"
+              }`}
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+              Assumptions
+            </button>
+          </div>
+
+          {showAssumptions && (
+            <div className="mb-4 grid gap-3 rounded-md border border-border bg-bg-primary p-3 sm:grid-cols-3">
+              <div>
+                <label htmlFor="eval-fee" className="mb-1 block text-[11px] font-medium text-text-muted">Platform Fee %</label>
+                <input
+                  id="eval-fee"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.25"
+                  value={feeRate}
+                  onChange={(e) => setFeeRate(parseFloat(e.target.value) || 0)}
+                  className="w-full rounded-md border border-border bg-bg-card px-3 py-1.5 text-sm text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
+                />
+              </div>
+              <div>
+                <label htmlFor="eval-shipping" className="mb-1 block text-[11px] font-medium text-text-muted">Shipping Cost</label>
+                <div className="relative">
+                  <DollarSign className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" />
+                  <input
+                    id="eval-shipping"
+                    type="number"
+                    min="0"
+                    step="0.50"
+                    value={shippingCost}
+                    onChange={(e) => setShippingCost(parseFloat(e.target.value) || 0)}
+                    className="w-full rounded-md border border-border bg-bg-card py-1.5 pl-7 pr-3 text-sm text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
+                  />
+                </div>
+              </div>
+              <div>
+                <label htmlFor="eval-margin" className="mb-1 block text-[11px] font-medium text-text-muted">Target Margin %</label>
+                <input
+                  id="eval-margin"
+                  type="number"
+                  min="0"
+                  max="200"
+                  step="5"
+                  value={targetMargin}
+                  onChange={(e) => setTargetMargin(parseFloat(e.target.value) || 0)}
+                  className="w-full rounded-md border border-border bg-bg-card px-3 py-1.5 text-sm text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
+                />
+              </div>
+            </div>
+          )}
 
           {/* List price input */}
           <div className="mb-4">
             <label htmlFor="eval-list" className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-text-muted">
-              List Price (editable)
+              List Price
             </label>
             <div className="relative max-w-xs">
               <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
@@ -284,7 +283,7 @@ export function EvaluateCard() {
                 step="0.01"
                 value={listPrice}
                 onChange={(e) => setListPrice(e.target.value)}
-                placeholder={result?.fair_value.toFixed(2) || "0.00"}
+                placeholder={result.fair_value.toFixed(2)}
                 className="w-full rounded-md border border-border bg-bg-primary py-2 pl-9 pr-3 text-sm text-text-primary placeholder:text-text-muted focus-visible:outline-2 focus-visible:outline-accent"
               />
             </div>
@@ -293,8 +292,8 @@ export function EvaluateCard() {
           {/* NRV Breakdown */}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <ScenarioCell label="Gross Revenue" value={`$${sellPrice.toFixed(2)}`} sub={`List on ${CHANNELS.find((c) => c.value === channel)?.label}`} />
-            <ScenarioCell label="Fees + Shipping" value={`−$${(fees + shippingCost).toFixed(2)}`} sub={`${feeRate}% fee + $${shippingCost.toFixed(2)} ship`} variant="muted" />
-            <ScenarioCell label="Net Revenue" value={`$${netRevenue.toFixed(2)}`} sub={`After all costs`} />
+            <ScenarioCell label="Fees + Shipping" value={`-$${(fees + shippingCost).toFixed(2)}`} sub={`${feeRate}% fee + $${shippingCost.toFixed(2)} ship`} variant="muted" />
+            <ScenarioCell label="Net Revenue" value={`$${netRevenue.toFixed(2)}`} sub="After all costs" />
             <ScenarioCell
               label="Profit"
               value={`${profit >= 0 ? "+" : ""}$${profit.toFixed(2)}`}
@@ -313,12 +312,10 @@ export function EvaluateCard() {
               <span className="text-xs text-text-muted">List for {targetMargin}% margin</span>
               <p className="font-bold text-buy">${targetListPrice.toFixed(2)}</p>
             </div>
-            {result && (
-              <div>
-                <span className="text-xs text-text-muted">Fair value (model)</span>
-                <p className="font-bold text-text-primary">${result.fair_value.toFixed(2)}</p>
-              </div>
-            )}
+            <div>
+              <span className="text-xs text-text-muted">Fair value (model)</span>
+              <p className="font-bold text-text-primary">${result.fair_value.toFixed(2)}</p>
+            </div>
           </div>
         </div>
       )}

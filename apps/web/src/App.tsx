@@ -50,7 +50,7 @@ function CardPage() {
   const { cardId } = useParams<{ cardId: string }>();
   const navigate = useNavigate();
 
-  const { data: card, isLoading } = useQuery({
+  const { data: card, isLoading, error, isError } = useQuery({
     queryKey: ["card", cardId],
     queryFn: () => api.getCard(cardId!),
     enabled: !!cardId,
@@ -64,9 +64,29 @@ function CardPage() {
     );
   }
 
+  if (isError) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    const isAuth = message.toLowerCase().includes("unauthorized") || message.toLowerCase().includes("forbidden") || message.includes("401") || message.includes("403");
+    return (
+      <div className="py-12 text-center">
+        <p className="text-lg font-semibold text-text-primary">{isAuth ? "Authentication required" : "Failed to load card"}</p>
+        <p className="mt-1 text-sm text-text-muted">{isAuth ? "Check your API key in settings" : message}</p>
+        <button onClick={() => navigate(-1)} className="mt-4 rounded-md bg-bg-secondary px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-hover min-h-[44px]">
+          Go back
+        </button>
+      </div>
+    );
+  }
+
   if (!card) {
     return (
-      <div className="py-12 text-center text-text-muted">Card not found</div>
+      <div className="py-12 text-center">
+        <p className="text-lg font-semibold text-text-primary">Card not found</p>
+        <p className="mt-1 text-sm text-text-muted">The card &ldquo;{cardId}&rdquo; doesn&rsquo;t exist or has been removed</p>
+        <button onClick={() => navigate(-1)} className="mt-4 rounded-md bg-bg-secondary px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-hover min-h-[44px]">
+          Go back
+        </button>
+      </div>
     );
   }
 
