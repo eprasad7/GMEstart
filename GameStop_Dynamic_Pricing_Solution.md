@@ -387,7 +387,17 @@ Anomaly detection runs daily at **4 AM UTC** (before features at 5 AM, predictio
 
 ### 6.3 Monitoring Price Floor
 
-Sub-$10 sales (accessories, commons, mismatches) create astronomical percentage errors that don't reflect model quality. A $2 card predicted at $4 is a 100% error but only $2 off — not a real pricing failure. MDAPE computed on $10+ sales is **42% with 91.5% coverage**. All production monitoring dashboards apply a $10 price floor filter. Training data should also be filtered to exclude sub-$10 noise.
+Sub-$10 sales (accessories, commons, mismatches) create astronomical percentage errors that don't reflect model quality. A $2 card predicted at $4 is a 100% error but only $2 off — not a real pricing failure. MAPE (trimmed) computed on $10+ sales is **42% with p10-p90 coverage of 91%**. All production monitoring dashboards apply a $10 price floor filter.
+
+### 6.4 Known ML Evaluation Limitations
+
+Two structural limitations affect offline evaluation quality:
+
+**1. Point-in-time feature leakage.** `feature_store` contains only the latest snapshot per card (one row, updated in place). When exporting training data, all historical sales are joined to today's features — meaning a 2023 sale gets 2026 velocity, momentum, and seasonality values. This overstates model accuracy for temporal features (~30% of signal weight). Static features (grade, population, card identity — ~70% of signal) are unaffected. **Fix:** Store daily feature snapshots and join each sale to the features as of its sale date. Deferred until data volume justifies storage cost (~250K rows/year).
+
+**2. Backtest P&L uses the target as the decision input.** The simulated trading function compares each sale's actual price against the model's buy/sell thresholds. In production, the "offered price" comes from a customer or listing, not from the test set target. This means the backtest P&L metric is directionally indicative but not a clean simulation of the production buy/sell policy. **Fix:** Generate a separate synthetic "offer stream" for backtesting, or use a held-out set of recent trade-in transactions as the offer source.
+
+**Impact:** The reported 42% MAPE should be treated as an approximate lower bound. True out-of-sample accuracy with proper point-in-time features may be higher (worse). The model is still production-useful for directional signals and relative ranking, but the exact numeric accuracy claim requires the fixes above.
 
 ---
 

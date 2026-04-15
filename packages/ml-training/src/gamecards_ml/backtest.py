@@ -90,7 +90,7 @@ def walk_forward_backtest(
             "test_samples": len(test_df),
             "mdape": float(np.median(abs_pct_errors) * 100),
             "mae": float(np.mean(np.abs(y_actual - y_pred))),
-            "coverage_90": coverage,
+            "coverage_p10_p90": coverage,
             "interval_width_pct": float(
                 np.mean((upper - lower) / np.maximum(y_pred, 1e-8)) * 100
             ),
@@ -114,7 +114,7 @@ def walk_forward_backtest(
         results.append(fold_result)
         logger.info(
             f"  MdAPE: {fold_result['mdape']:.1f}%, "
-            f"Coverage: {fold_result['coverage_90']:.1f}%, "
+            f"Coverage(p10-p90): {fold_result['coverage_p10_p90']:.1f}%, "
             f"P&L: ${pnl:.2f}"
         )
 
@@ -166,13 +166,13 @@ def cli(data: str, output: str):
     if results:
         # Summary
         avg_mdape = np.mean([r["mdape"] for r in results])
-        avg_coverage = np.mean([r["coverage_90"] for r in results])
+        avg_coverage = np.mean([r["coverage_p10_p90"] for r in results])
         total_pnl = sum(r["simulated_pnl"] for r in results)
 
         summary = {
             "folds": len(results),
             "avg_mdape": round(avg_mdape, 2),
-            "avg_coverage_90": round(avg_coverage, 2),
+            "avg_coverage_p10_p90": round(avg_coverage, 2),
             "total_simulated_pnl": round(total_pnl, 2),
             "fold_results": results,
         }
@@ -180,7 +180,7 @@ def cli(data: str, output: str):
         Path(output).write_text(json.dumps(summary, indent=2))
         logger.info(f"\nBacktest Summary ({len(results)} folds):")
         logger.info(f"  Avg MdAPE: {avg_mdape:.1f}%")
-        logger.info(f"  Avg Coverage (90%): {avg_coverage:.1f}%")
+        logger.info(f"  Avg Coverage (p10-p90): {avg_coverage:.1f}%")
         logger.info(f"  Total Simulated P&L: ${total_pnl:.2f}")
         logger.info(f"  Results saved to {output}")
     else:
