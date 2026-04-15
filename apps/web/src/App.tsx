@@ -10,12 +10,14 @@ import { AlertsList } from "./components/AlertsList";
 import { AgentDashboard, AgentSummary } from "./components/AgentDashboard";
 import { SignIn } from "./components/SignIn";
 import { CategoryBrowse } from "./components/CategoryBrowse";
+import { Architecture } from "./components/Architecture";
 import {
   LayoutDashboard,
   Search,
   Bell,
   Calculator,
   Bot,
+  Cpu,
   Menu,
   X,
 } from "lucide-react";
@@ -45,6 +47,7 @@ const navTabs = [
   { path: "/evaluate", label: "Evaluate", icon: Calculator },
   { path: "/alerts", label: "Alerts", icon: Bell },
   { path: "/agents", label: "Agents", icon: Bot },
+  { path: "/architecture", label: "How It Works", icon: Cpu },
 ];
 
 // ─── Card Detail Page (route-aware) ───
@@ -280,6 +283,7 @@ function AppShell() {
             }
           />
           <Route path="/agents" element={<AgentDashboard />} />
+          <Route path="/architecture" element={<Architecture />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
