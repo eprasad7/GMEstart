@@ -223,7 +223,7 @@ function AlertGroup({ severity, alerts, ...rowProps }: {
   const style = severityStyles[severity];
   return (
     <div className={`overflow-hidden rounded-xl border bg-bg-card shadow-sm ${style.border}`}>
-      <div className="flex items-center gap-2 px-5 py-2.5">
+      <div className="flex items-center gap-2 px-4 py-2.5 sm:px-5">
         <span className={`h-2 w-2 rounded-full ${style.dot}`} />
         <span className="text-xs font-semibold uppercase tracking-wide text-text-muted">{style.label}</span>
         <span className="text-xs text-text-muted">{alerts.length}</span>
@@ -258,7 +258,8 @@ function AlertRow({ alert, onResolve, onCardClick, openMenuId, setOpenMenuId, on
   const isAssignOpen = openMenuId?.id === alert.id && openMenuId.type === "assign";
 
   return (
-    <div className={`flex items-start gap-4 border-t border-border px-5 py-4 transition-colors hover:bg-bg-hover ${isPending ? "opacity-40 pointer-events-none" : ""}`}>
+    <div className={`border-t border-border px-4 py-3.5 sm:px-5 transition-colors hover:bg-bg-hover ${isPending ? "opacity-40 pointer-events-none" : ""}`}>
+      <div className="flex items-start gap-3 sm:gap-4">
       {/* Icon */}
       <div className="mt-0.5 shrink-0">
         {alertIcons[alert.alert_type] || <Eye className="h-4 w-4 text-text-muted" />}
@@ -287,7 +288,7 @@ function AlertRow({ alert, onResolve, onCardClick, openMenuId, setOpenMenuId, on
       </div>
 
       {/* Action rail — pill buttons with labels */}
-      <div className="flex shrink-0 items-center gap-1.5 mt-0.5">
+      <div className="hidden shrink-0 items-center gap-1.5 mt-0.5 sm:flex">
         {/* Assign */}
         <div className="relative">
           <button

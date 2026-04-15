@@ -142,7 +142,7 @@ export function MarketOverview({ alerts = [], onNavigate }: MarketOverviewProps)
                   <button
                     key={alert.id}
                     onClick={() => handleCardClick(alert.card_id)}
-                    className={`flex w-full items-center gap-4 px-5 py-3.5 text-left transition-colors hover:bg-bg-hover min-h-[56px] ${
+                    className={`flex w-full items-center gap-4 px-4 py-3 sm:px-5 text-left transition-colors hover:bg-bg-hover min-h-[56px] ${
                       i < Math.min(urgentAlerts.length, 4) - 1 ? "border-b border-border" : ""
                     }`}
                   >
@@ -162,8 +162,8 @@ export function MarketOverview({ alerts = [], onNavigate }: MarketOverviewProps)
             </section>
           )}
 
-          {/* Pending recommendations */}
-          {pendingRecs.length > 0 && (
+          {/* Pending recommendations — or Major Price Moves as fallback */}
+          {pendingRecs.length > 0 ? (
             <section className="rounded-xl border border-border bg-bg-card shadow-sm">
               <SectionHeader
                 icon={<ShoppingCart className="h-4 w-4 text-buy" />}
@@ -176,7 +176,7 @@ export function MarketOverview({ alerts = [], onNavigate }: MarketOverviewProps)
                 {pendingRecs.map((rec, i) => (
                   <div
                     key={rec.id}
-                    className={`flex items-center gap-3 px-5 py-3.5 ${
+                    className={`flex items-center gap-3 px-4 py-3 sm:px-5 ${
                       i < pendingRecs.length - 1 ? "border-b border-border" : ""
                     }`}
                   >
@@ -205,6 +205,37 @@ export function MarketOverview({ alerts = [], onNavigate }: MarketOverviewProps)
                 ))}
               </div>
             </section>
+          ) : (
+            <section className="rounded-xl border border-border bg-bg-card shadow-sm">
+              <SectionHeader
+                icon={<TrendingUp className="h-4 w-4 text-accent" />}
+                title="Major Price Moves"
+              />
+              <div>
+                {bigMoves.length > 0 ? bigMoves.map((m, i) => (
+                  <button
+                    key={m.card_id}
+                    onClick={() => handleCardClick(m.card_id)}
+                    className={`flex w-full items-center justify-between px-4 py-3 sm:px-5text-left transition-colors hover:bg-bg-hover min-h-[44px] ${
+                      i < bigMoves.length - 1 ? "border-b border-border" : ""
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-text-primary truncate">{m.name}</p>
+                      <p className="text-xs text-text-muted">{m.grading_company} {m.grade}</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-sm font-bold text-text-primary">${m.recent_avg.toFixed(0)}</span>
+                      <span className={`text-xs font-bold ${m.change_pct > 0 ? "text-buy" : "text-sell"}`}>
+                        {m.change_pct > 0 ? "+" : ""}{m.change_pct.toFixed(0)}%
+                      </span>
+                    </div>
+                  </button>
+                )) : (
+                  <div className="px-5 py-10 text-center text-sm text-text-muted">No major moves (&gt;10%) this week</div>
+                )}
+              </div>
+            </section>
           )}
         </div>
       )}
@@ -222,7 +253,7 @@ export function MarketOverview({ alerts = [], onNavigate }: MarketOverviewProps)
               <button
                 key={m.card_id}
                 onClick={() => handleCardClick(m.card_id)}
-                className={`flex w-full items-center gap-4 px-5 py-3.5 text-left transition-colors hover:bg-bg-hover min-h-[56px] ${
+                className={`flex w-full items-center gap-4 px-4 py-3 sm:px-5 text-left transition-colors hover:bg-bg-hover min-h-[56px] ${
                   i < topBuys.length - 1 ? "border-b border-border" : ""
                 }`}
               >
@@ -258,7 +289,7 @@ export function MarketOverview({ alerts = [], onNavigate }: MarketOverviewProps)
                 <button
                   key={card.card_id}
                   onClick={() => handleCardClick(card.card_id)}
-                  className={`flex w-full items-center gap-4 px-5 py-3.5 text-left transition-colors hover:bg-bg-hover min-h-[56px] ${
+                  className={`flex w-full items-center gap-4 px-4 py-3 sm:px-5 text-left transition-colors hover:bg-bg-hover min-h-[56px] ${
                     i < Math.min(staleCards.length, 5) - 1 ? "border-b border-border" : ""
                   }`}
                 >
@@ -291,7 +322,7 @@ export function MarketOverview({ alerts = [], onNavigate }: MarketOverviewProps)
                 <button
                   key={m.card_id}
                   onClick={() => handleCardClick(m.card_id)}
-                  className={`flex w-full items-center justify-between px-5 py-3 text-left transition-colors hover:bg-bg-hover min-h-[44px] ${
+                  className={`flex w-full items-center justify-between px-4 py-3 sm:px-5text-left transition-colors hover:bg-bg-hover min-h-[44px] ${
                     i < bigMoves.length - 1 ? "border-b border-border" : ""
                   }`}
                 >
@@ -335,7 +366,7 @@ export function MarketOverview({ alerts = [], onNavigate }: MarketOverviewProps)
                     icon={<Zap className="h-4 w-4 text-warning" />}
                     title="Trending Now"
                   />
-                  <div className="flex gap-3 overflow-x-auto px-5 pb-4 pt-1">
+                  <div className="flex gap-3 overflow-x-auto px-4 pb-4 sm:px-5 pt-1">
                     {trendingCards.map((t: Record<string, unknown>) => (
                       <button
                         key={t.card_id as string}
@@ -362,7 +393,7 @@ export function MarketOverview({ alerts = [], onNavigate }: MarketOverviewProps)
                       <button
                         key={m.card_id}
                         onClick={() => handleCardClick(m.card_id)}
-                        className="flex items-center justify-between border-b border-border px-5 py-2.5 text-left transition-colors hover:bg-bg-hover min-h-[44px] last:border-b-0 sm:[&:nth-last-child(2)]:border-b-0"
+                        className="flex items-center justify-between border-b border-border px-4 py-2.5 sm:px-5 text-left transition-colors hover:bg-bg-hover min-h-[44px] last:border-b-0 sm:[&:nth-last-child(2)]:border-b-0"
                       >
                         <div className="flex items-center gap-2 min-w-0">
                           <span className="text-xs font-bold text-text-muted w-4">{i + 1}</span>
@@ -387,7 +418,7 @@ export function MarketOverview({ alerts = [], onNavigate }: MarketOverviewProps)
                       <button
                         key={m.card_id}
                         onClick={() => handleCardClick(m.card_id)}
-                        className={`flex w-full items-center justify-between px-5 py-3 text-left transition-colors hover:bg-bg-hover min-h-[44px] ${
+                        className={`flex w-full items-center justify-between px-4 py-3 sm:px-5text-left transition-colors hover:bg-bg-hover min-h-[44px] ${
                           i < bigMoves.length - 1 ? "border-b border-border" : ""
                         }`}
                       >
@@ -423,7 +454,7 @@ function SectionHeader({ icon, title, count, countColor, action }: {
   action?: { label: string; onClick: () => void };
 }) {
   return (
-    <div className="flex items-center justify-between px-5 py-3.5">
+    <div className="flex items-center justify-between px-4 py-3 sm:px-5">
       <div className="flex items-center gap-2">
         {icon}
         <h3 className="text-sm font-bold text-text-primary">{title}</h3>

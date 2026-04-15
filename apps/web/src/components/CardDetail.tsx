@@ -63,7 +63,7 @@ export function CardDetail({ card, onBack }: CardDetailProps) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-start gap-4">
+      <div className="flex items-start gap-3 sm:gap-4">
         <button
           onClick={onBack}
           className="mt-1 shrink-0 rounded-md p-2 text-text-muted transition-colors hover:bg-bg-secondary hover:text-text-primary min-h-[44px] min-w-[44px] flex items-center justify-center"
@@ -71,14 +71,14 @@ export function CardDetail({ card, onBack }: CardDetailProps) {
         >
           <ArrowLeft className="h-5 w-5" />
         </button>
-        <div className="flex flex-1 items-start gap-4">
+        <div className="flex flex-1 items-start gap-3 sm:gap-4">
           {card.image_url ? (
-            <img src={card.image_url} alt={card.name} className="h-24 w-20 rounded-lg border border-border object-cover shadow-sm" />
+            <img src={card.image_url} alt={card.name} className="hidden h-24 w-20 rounded-lg border border-border object-cover shadow-sm sm:block" />
           ) : (
-            <div className="flex h-24 w-20 items-center justify-center rounded-lg border border-border bg-bg-secondary text-2xl text-text-muted shadow-sm">?</div>
+            <div className="hidden h-24 w-20 items-center justify-center rounded-lg border border-border bg-bg-secondary text-2xl text-text-muted shadow-sm sm:flex">?</div>
           )}
-          <div>
-            <h2 className="text-xl font-bold text-text-primary">{card.name}</h2>
+          <div className="min-w-0">
+            <h2 className="text-lg font-bold text-text-primary truncate sm:text-xl">{card.name}</h2>
             <p className="text-sm text-text-secondary">
               {card.set_name} ({card.set_year}) &middot; #{card.card_number}
             </p>
@@ -105,30 +105,32 @@ export function CardDetail({ card, onBack }: CardDetailProps) {
       </div>
 
       {/* Grade selector */}
-      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-bg-card p-4 shadow-sm">
-        <div>
-          <label htmlFor="detail-company" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-text-muted">Grading Co.</label>
-          <select
-            id="detail-company"
-            value={gradingCompany}
-            onChange={(e) => setGradingCompany(e.target.value)}
-            className="rounded-md border border-border bg-bg-primary px-3 py-2 text-sm text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
-          >
-            {GRADING_COMPANIES.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
+      <div className="rounded-lg border border-border bg-bg-card p-3 shadow-sm sm:p-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label htmlFor="detail-company" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-text-muted">Grading Co.</label>
+            <select
+              id="detail-company"
+              value={gradingCompany}
+              onChange={(e) => setGradingCompany(e.target.value)}
+              className="rounded-md border border-border bg-bg-primary px-3 py-2 text-sm text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              {GRADING_COMPANIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="detail-grade" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-text-muted">Grade</label>
+            <select
+              id="detail-grade"
+              value={grade}
+              onChange={(e) => setGrade(e.target.value)}
+              className="rounded-md border border-border bg-bg-primary px-3 py-2 text-sm text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              {GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </div>
         </div>
-        <div>
-          <label htmlFor="detail-grade" className="mb-1 block text-xs font-semibold uppercase tracking-wide text-text-muted">Grade</label>
-          <select
-            id="detail-grade"
-            value={grade}
-            onChange={(e) => setGrade(e.target.value)}
-            className="rounded-md border border-border bg-bg-primary px-3 py-2 text-sm text-text-primary focus-visible:outline-2 focus-visible:outline-accent"
-          >
-            {GRADES.map((g) => <option key={g} value={g}>{g}</option>)}
-          </select>
-        </div>
-        <div className="ml-auto flex gap-2">
+        <div className="mt-3 flex gap-2">
           <button
             onClick={() => setShowExplainer(!showExplainer)}
             className={`flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition-colors min-h-[44px] ${
@@ -136,7 +138,8 @@ export function CardDetail({ card, onBack }: CardDetailProps) {
             }`}
           >
             <Info className="h-3.5 w-3.5" />
-            Why this price?
+            <span className="hidden sm:inline">Why this price?</span>
+            <span className="sm:hidden">Why?</span>
           </button>
           <button
             onClick={() => setShowComparison(!showComparison)}
@@ -162,11 +165,11 @@ export function CardDetail({ card, onBack }: CardDetailProps) {
           <span className="text-sm text-danger">No pricing data available for this grade</span>
         </div>
       ) : price ? (
-        <div className="rounded-lg border border-border bg-bg-card p-5 shadow-sm">
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-5">
-            <div>
+        <div className="rounded-lg border border-border bg-bg-card p-4 shadow-sm sm:p-5">
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5 sm:gap-6">
+            <div className="col-span-2 sm:col-span-1">
               <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Fair Value</p>
-              <p className="mt-0.5 text-3xl font-extrabold text-text-primary">${price.price.toFixed(2)}</p>
+              <p className="mt-0.5 text-2xl font-extrabold text-text-primary sm:text-3xl">${price.price.toFixed(2)}</p>
               <p className="text-[11px] text-text-muted">90% CI: ${price.lower.toFixed(0)}–${price.upper.toFixed(0)}</p>
             </div>
             <div>

@@ -102,6 +102,9 @@
     ]
   },
 
+  // Custom domain
+  "routes": [{ "pattern": "api.gmestart.com", "custom_domain": true }],
+
   // Browser Rendering — headless Chrome for scraping
   "browser": {
     "binding": "BROWSER"

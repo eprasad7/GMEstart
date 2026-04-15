@@ -40,7 +40,7 @@ export function SearchBar({ onSelect, category }: SearchBarProps) {
   }, [debouncedQuery, category]);
 
   return (
-    <div className="relative w-full max-w-md" role="combobox" aria-expanded={open} aria-haspopup="listbox">
+    <div className="relative w-full lg:max-w-md" role="combobox" aria-expanded={open} aria-haspopup="listbox">
       <div className="relative">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
         <input

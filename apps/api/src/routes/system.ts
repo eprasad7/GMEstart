@@ -16,15 +16,26 @@ export const systemRoutes = new Hono<{ Bindings: Env }>();
  */
 systemRoutes.get("/health", async (c) => {
   const [predictionMeta, latestPrediction, latestIngestion, cardCount, latestMonitoring, latestArchive] = await Promise.all([
-    c.env.MODELS.get("models/predictions_meta.json").then(async (obj) => {
-      if (!obj) return null;
-      return obj.json() as Promise<{
-        version: string;
-        model_version: string;
-        conformal_correction: number;
-        cards_scored: number;
-        scored_at: string;
-      }>;
+    // Check D1 for model version (more reliable than R2 metadata)
+    c.env.DB.prepare(
+      `SELECT model_version, COUNT(*) as count FROM model_predictions
+       WHERE model_version != 'statistical-v1'
+       GROUP BY model_version ORDER BY predicted_at DESC LIMIT 1`
+    ).bind().first().then((row) => {
+      if (!row || (row.count as number) === 0) {
+        // Fallback: try R2
+        return c.env.MODELS.get("models/predictions_meta.json").then(async (obj) => {
+          if (!obj) return null;
+          return obj.json() as Promise<{ version: string; model_version: string; conformal_correction: number; cards_scored: number; scored_at: string }>;
+        });
+      }
+      return {
+        version: row.model_version as string,
+        model_version: row.model_version as string,
+        cards_scored: row.count as number,
+        scored_at: new Date().toISOString(),
+        conformal_correction: 0,
+      };
     }),
     c.env.DB.prepare(`SELECT MAX(predicted_at) as latest FROM model_predictions`).bind().first(),
     c.env.DB.prepare(

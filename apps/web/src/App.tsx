@@ -131,7 +131,7 @@ function AppShell() {
     <div className="min-h-screen bg-bg-primary">
       {/* ─── Top Nav ─── */}
       <header className="sticky top-0 z-30 bg-bg-nav">
-        <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-4 px-6 lg:px-10">
+        <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-3 px-4 sm:px-6 lg:px-10">
           <button onClick={() => navigate("/")} className="flex items-center gap-2">
             <span className="text-xl font-extrabold tracking-tight text-text-inverse">
               GME<span className="text-accent">start</span>
@@ -196,7 +196,7 @@ function AppShell() {
 
       {/* ─── Category Tabs ─── */}
       <div className="border-b border-border bg-bg-card">
-        <div className="mx-auto flex max-w-[1600px] items-center gap-1 overflow-x-auto px-6 py-1 lg:px-10">
+        <div className="mx-auto flex max-w-[1600px] items-center gap-1 overflow-x-auto px-4 py-1 sm:px-6 lg:px-10">
           {CATEGORIES.map((cat) => (
             <button
               key={cat.value}
@@ -219,7 +219,7 @@ function AppShell() {
       </div>
 
       {/* ─── Main Content (routed) ─── */}
-      <main className="mx-auto max-w-[1600px] px-6 py-6 lg:px-10">
+      <main className="mx-auto max-w-[1600px] px-4 py-5 sm:px-6 lg:px-10">
         <div className="mb-4 lg:hidden">
           <SearchBar onSelect={handleSelectCard} category={activeCategory} />
         </div>
