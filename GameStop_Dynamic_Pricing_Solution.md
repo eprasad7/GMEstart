@@ -24,15 +24,15 @@ GameStop's collectibles business (graded trading cards — Pokemon, sports, TCG)
 | Priority | Source | Data Type | Access Method | Cost | Update Frequency |
 |----------|--------|-----------|---------------|------|-----------------|
 | **P0** | eBay Marketplace Insights API | Sold listings (90 days) | Limited Release API — negotiate access | Negotiate | Event-driven (every 15 min) |
-| **P0** | SoldComps API | eBay sold listings (365 days) | REST API | $59/mo (5,000 req/mo) | Hourly |
-| **P0** | PriceCharting API | Aggregated prices (all time) | REST API (40-char token) | ~$15-30/mo (Legendary tier) | Daily CSV |
-| **P1** | PSA Population Reports | Grade population counts | Web scrape (psacard.com/pop) or GemRate | Free (GemRate) | Daily |
+| **P0** | SoldComps API | eBay sold listings (365 days) | REST API | $59/mo (5,000 req/mo) | Every 15 min (cron) |
+| **P0** | PriceCharting API | Aggregated prices (all time) | REST API (40-char token) | ~$15-30/mo (Legendary tier) | Daily (2 AM cron) |
+| **P1** | PSA Population Reports | Grade population counts | Web scrape (psacard.com/pop) or GemRate | Free (GemRate) | Daily (3 AM cron) |
 | **P1** | CardHedger API | 40M+ transactions, multi-platform | REST API | $49+/mo | Near real-time |
-| **P1** | Reddit API | Social sentiment | OAuth REST | $12K/yr (Standard tier) | Every 5 min |
-| **P2** | Twitter/X API | Event detection, viral moments | Pay-per-use | ~$500-1K/mo | Real-time filtered stream |
+| **P1** | Reddit API | Social sentiment | OAuth REST | $12K/yr (Standard tier) | Every 5 min (cron) |
+| **P2** | Twitter/X API | Event detection, viral moments | Pay-per-use | ~$500-1K/mo | **DEFERRED** |
 | **P2** | TCGPlayer API | Pokemon/MTG market prices | Apply for access | Free (with approval) | Daily |
 | **P2** | PokemonPriceTracker API | Graded Pokemon prices + pop | REST API | $99/mo (Business) | Daily |
-| **P3** | GameStop internal | Trade-in data, foot traffic, inventory | Internal DB | Free | Real-time |
+| **P3** | GameStop internal | Trade-in data, foot traffic, inventory | Internal DB | Free | **DEFERRED** — requires integration |
 
 ### 1.2 eBay Strategy — Legal & Practical
 
@@ -43,39 +43,43 @@ GameStop's collectibles business (graded trading cards — Pokemon, sports, TCG)
 2. **Use SoldComps as fallback** ($59/mo) — licensed eBay sold data via REST API, up to 240 results per request, 365 days history.
 3. **Use CardHedger for multi-platform** ($49/mo) — aggregates eBay, Fanatics, Heritage Auctions, and more.
 
-### 1.3 Price History Storage (The Gap Ravi Identified)
+### 1.3 Price History Storage
 
-Currently, GameStop doesn't store price history. This is the foundation everything else depends on.
+GameStop doesn't store price history. This is the foundation everything else depends on.
+
+**Built on Cloudflare D1** (SQLite at the edge, zero cold starts, global replication, ~$5-20/mo at moderate scale):
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Price History Database                         │
-│                    (Cloudflare D1 — SQLite at the edge)           │
-│                                                                  │
-│  Tables:                                                         │
-│  ├── card_catalog        — master card registry with attributes  │
-│  ├── price_observations  — every scraped/API price point         │
-│  │   (card_id, source, price, date, grade, sale_type,           │
-│  │    seller_id*, bid_count, listing_url)                        │
-│  │   *seller_id availability depends on feed; verify per source  │
-│  ├── price_aggregates    — daily/weekly rollups per card+grade   │
-│  ├── population_reports  — daily PSA/CGC/BGS pop snapshots      │
-│  ├── sentiment_raw       — individual sentiment observations     │
-│  ├── sentiment_scores    — rolled-up 24h/7d/30d sentiment        │
-│  ├── feature_store       — pre-computed ML features per card     │
-│  ├── model_predictions   — model outputs with confidence bands   │
-│  └── price_alerts        — triggered alerts for price movements  │
-│                                                                  │
-│  Dedup: unique indexes on (card_id, source, listing_url)         │
-│  Aggregation: application-level daily/weekly/monthly rollups     │
-│  Archival: old observations moved to R2 (Parquet/CSV)            │
-│  D1 limit: 10GB per database — plan for archival at ~6 months    │
-└─────────────────────────────────────────────────────────────────┘
-```
+Tables (all implemented):
+├── card_catalog        — master card registry (id, name, set_name, set_year, card_number,
+│                         category, player_character, team, rarity, image_url, pricecharting_id)
+│                         Categories: pokemon, sports_baseball, sports_basketball,
+│                         sports_football, sports_hockey, tcg_mtg, tcg_yugioh, other
+├── price_observations  — every API price point
+│   (card_id, source, price_usd, sale_date, grade, grading_company, grade_numeric,
+│    sale_type, seller_id, bid_count, listing_url, is_anomaly, anomaly_reason)
+│   Sources: ebay, soldcomps, pricecharting, cardhedger, tcgplayer, gamestop_internal
+│   Dedup: unique index on (card_id, source, listing_url)
+├── price_aggregates    — daily/weekly/monthly rollups per card+grade
+│   (avg_price, median_price, min_price, max_price, sale_count, volume_bucket)
+├── population_reports  — PSA/CGC/BGS/SGC pop snapshots
+├── sentiment_raw       — individual Reddit/Twitter observations
+├── sentiment_scores    — rolled-up 24h/7d/30d sentiment scores
+├── feature_store       — pre-computed ML features per card
+├── model_predictions   — model outputs with confidence bands
+│   (fair_value, p10, p25, p50, p75, p90, buy_threshold, sell_threshold,
+│    confidence [HIGH/MEDIUM/LOW], volume_bucket)
+├── price_alerts        — triggered alerts (price_spike, price_crash, viral_social,
+│                         anomaly_detected, new_high, new_low)
+└── ingestion_log       — pipeline run tracking (source, status, records_processed, error_message)
 
-**Why Cloudflare D1:** SQLite at the edge with zero cold starts, global replication, and ~$5-20/mo at moderate scale. No separate database server to manage. The team writes standard SQL. Trade-off: no native time-series extensions (handled in application code via cron-triggered aggregation).
+Archival: old observations moved to R2 (Parquet/CSV)
+D1 limit: 10GB per database — plan for archival at ~6 months
+```
 
 ### 1.4 Data Pipeline Architecture
+
+The entire pipeline runs on **Cloudflare Cron Triggers**, **Cloudflare Queues**, and **Durable Object agents**. There is no Airflow, no separate orchestrator.
 
 ```
                     ┌─────────────┐
@@ -84,23 +88,24 @@ Currently, GameStop doesn't store price history. This is the foundation everythi
                            │
         ┌──────────────────┼──────────────────┐
         │                  │                  │
-   eBay/SoldComps    Reddit/Twitter     PriceCharting
-   (every 15 min)    (every 5 min)     (daily)
+   eBay/SoldComps    Reddit             PriceCharting
+   (every 15 min)    (every 5 min)     (daily 2am)
         │                  │                  │
         ▼                  ▼                  ▼
    ┌─────────────────────────────────────────────┐
    │     Cloudflare Cron Triggers + Queues        │
    │                                               │
-   │  Cron: soldcomps ingestion   (every 15 min)  │
-   │  Cron: reddit sentiment      (every 5 min)   │
-   │  Cron: pricecharting          (daily 2am)    │
-   │  Cron: psa population         (daily 3am)    │
-   │  Cron: anomaly detection      (daily 4am)    │
-   │  Cron: aggregates + features  (daily 5am)    │
-   │  Cron: generate predictions   (daily 6am)    │
-   │  Cron: sentiment rollup       (hourly)       │
-   │  Queue: price observations    (async batch)  │
-   │  Queue: sentiment analysis    (async AI)     │
+   │  */15 * * * *  → SoldComps ingestion          │
+   │  */5  * * * *  → Reddit sentiment             │
+   │  0   * * * *   → Sentiment rollup (hourly)    │
+   │  0 2 * * *     → PriceCharting                │
+   │  0 3 * * *     → PSA population reports       │
+   │  0 4 * * *     → Anomaly detection            │
+   │  0 5 * * *     → Aggregates + features        │
+   │  0 6 * * *     → Batch predictions            │
+   │                                               │
+   │  Queue: gamecards-ingestion (async batch)     │
+   │  Queue: gamecards-sentiment (async AI)        │
    └──────────────────┬──────────────────────────┘
                       │
                       ▼
@@ -108,15 +113,17 @@ Currently, GameStop doesn't store price history. This is the foundation everythi
    │        Cloudflare D1 (Price History)         │
    │  + KV (cache hot prices, rate limiting)      │
    │  + R2 (raw data archive, model artifacts)    │
-   │  + Workers AI (sentiment NLP)                │
+   │  + Workers AI (sentiment NLP — Llama 3.1 8B) │
    └──────────────────┬──────────────────────────┘
                       │
            ┌──────────┼──────────┐
            │          │          │
            ▼          ▼          ▼
-      Pricing API  Dashboard  Alerts
-      (Hono/Workers) (Vite/React) (in-app)
+      Pricing API  Dashboard  Agents (DOs)
+      (Hono/Workers) (Vite/React) (4 agents)
 ```
+
+**Pipeline ordering is critical** — anomaly detection (4 AM) must run before features/predictions (5-6 AM) so flagged outliers are excluded from downstream computation.
 
 ---
 
@@ -158,61 +165,15 @@ Based on research across collectibles pricing systems, academic papers, and prod
 }
 ```
 
-**Demand Signals:**
-```python
-{
-    'sales_count_7d': 3,
-    'sales_count_30d': 12,
-    'sales_count_90d': 28,
-    'velocity_trend': 1.4,                   # 7d rate / 30d rate — >1 = accelerating
-    'price_momentum': 1.08,                  # 7d MA / 30d MA — >1 = rising
-}
-```
+**Demand Signals:** `sales_count_7d/30d/90d`, `velocity_trend` (7d/30d ratio), `price_momentum` (7d MA / 30d MA).
 
-> **Deferred features (require live listing snapshots — not available from sold-listing feeds):**
-> - `active_listings_count` — needs eBay Browse API or recurring listing snapshots
-> - `days_of_inventory` — needs listing-history storage over time (listing count / daily sales rate); a single Browse API call is insufficient
-> - `sell_through_rate` — needs recurring listing snapshots to compute sold/listed ratio over time
-> - `avg_bidders_last_5_auctions` — needs bid-event data, not exposed by SoldComps or CardHedger
->
-> These features can be added in Phase 2+ if eBay Browse API access is secured **and** a listing-snapshot pipeline is built to store historical listing counts.
+> **DEFERRED features** (require live listing snapshots): `active_listings_count`, `days_of_inventory`, `sell_through_rate`, `avg_bidders_last_5_auctions`. Need eBay Browse API + listing-snapshot pipeline.
 
-**Sentiment Features (from Reddit/Twitter pipeline):**
-```python
-{
-    'social_mention_count_7d': 47,
-    'social_mention_trend': 2.1,             # 7d / 30d normalized — >1 = spiking
-    'social_sentiment_score': 0.72,          # -1 to 1 (bearish to bullish)
-    'reddit_post_count_7d': 12,
-    'influencer_mention_7d': True,           # mentioned by top YouTuber/streamer
-    'search_interest_trend': 1.5,            # Google Trends normalized
-}
-```
+**Sentiment Features (from Reddit pipeline):** `social_mention_count_7d`, `social_mention_trend` (7d/30d ratio), `social_sentiment_score` (-1 to 1), `reddit_post_count_7d`, `influencer_mention_7d`, `search_interest_trend`.
 
-**Seasonality Features:**
-```python
-{
-    'is_holiday_season': False,              # Nov-Dec = +10-20% prices
-    'is_tax_refund_season': True,            # Feb-Apr = buying surge
-    'is_summer_lull': False,                 # Jun-Aug = lower activity
-    'is_nfl_season': True,                   # for football cards
-    'days_since_set_release': 45,            # new sets spike then decay
-    'month_sin': 0.866,                      # cyclical encoding
-    'month_cos': 0.5,
-}
-```
+**Seasonality Features:** `is_holiday_season`, `is_tax_refund_season`, `is_summer_lull`, `is_nfl_season`, `days_since_set_release`, cyclical month encoding (`month_sin`, `month_cos`).
 
-**GameStop-Exclusive Features (the moat):**
-```python
-{
-    'gamestop_trade_in_volume_7d': 8,        # cards traded in at GS stores
-    'gamestop_store_price': 45.99,           # current GS listed price
-    'gamestop_inventory_count': 3,           # cards in GS inventory
-    'gamestop_days_in_inventory': 22,        # aging signal
-    'gamestop_regional_demand': 'high',      # from store-level data
-    # NO COMPETITOR HAS THIS DATA
-}
-```
+**GameStop-Exclusive Features (the moat) — DEFERRED:** `gamestop_trade_in_volume_7d`, `gamestop_store_price`, `gamestop_inventory_count`, `gamestop_days_in_inventory`, `gamestop_regional_demand`. No competitor has this data — requires internal DB integration.
 
 ---
 
@@ -270,14 +231,12 @@ LightGBM is the right primary model because:
 import lightgbm as lgb
 
 # Train on log(price) — normalizes fat-tailed distribution
-# Base params — 'objective' is overridden per-quantile below.
-# Huber is used only if training a single point-prediction model (not shown here).
 params = {
     'objective': 'huber',           # Overridden to 'quantile' in the loop below
     'metric': 'mae',
     'learning_rate': 0.03,
     'num_leaves': 63,
-    'min_data_in_leaf': 20,         # Prevents overfitting on sparse cards
+    'min_data_in_leaf': 20,
     'feature_fraction': 0.8,
     'bagging_fraction': 0.8,
     'bagging_freq': 5,
@@ -286,8 +245,7 @@ params = {
     'verbose': -1,
 }
 
-# Quantile models for uncertainty
-# NOTE: Train ALL quantiles used in inference, including p20/p80 for buy/sell thresholds
+# Quantile models for uncertainty — includes p20/p80 for buy/sell thresholds
 quantiles = [0.10, 0.20, 0.25, 0.50, 0.75, 0.80, 0.90]
 models = {}
 for q in quantiles:
@@ -305,77 +263,17 @@ confidence_width = (np.exp(models[0.90].predict(X)) - np.exp(models[0.10].predic
 
 **Why Huber loss, not MSE:** A single anomalous $3,000 sale of a card that normally trades at $50 will destroy a model trained with MSE. Huber loss is robust to these fat-tailed outliers.
 
-**Why log(price):** Collectibles prices are log-normally distributed. A $50 card varying ±$10 is the same relative uncertainty as a $5,000 card varying ±$1,000. Log-transform makes the model learn relative, not absolute, error.
+**Why log(price):** Collectibles prices are log-normally distributed. A $50 card varying +/-$10 is the same relative uncertainty as a $5,000 card varying +/-$1,000.
 
 ### 3.4 Conformal Prediction for Calibrated Uncertainty
 
-Quantile regression gives intervals, but they may not be calibrated (the 90% interval might only cover 78% of actuals). Conformal prediction wraps any model to give **distribution-free coverage guarantees**.
-
-```python
-class ConformalPricer:
-    """
-    Wraps any point prediction model to produce
-    prediction intervals with guaranteed coverage.
-    """
-    def __init__(self, base_model, alpha=0.10):
-        # alpha=0.10 gives 90% prediction intervals
-        self.base_model = base_model
-        self.alpha = alpha
-
-    def calibrate(self, X_cal, y_cal):
-        preds = self.base_model.predict(X_cal)
-        self.scores = np.sort(np.abs(y_cal - preds))
-
-    def predict_interval(self, X_test):
-        preds = self.base_model.predict(X_test)
-        n = len(self.scores)
-        q_idx = min(int(np.ceil((1 - self.alpha) * (n + 1))) - 1, n - 1)
-        width = self.scores[q_idx]
-        return preds - width, preds, preds + width
-```
+Quantile regression gives intervals, but they may not be calibrated (the 90% interval might only cover 78% of actuals). Conformal prediction wraps any model to give **distribution-free coverage guarantees** by computing nonconformity scores on a calibration set and using the empirical quantile as the interval width.
 
 ### 3.5 Buy/Sell Decision Framework
 
-> **Critical:** Thresholds must be based on **net realizable value (NRV)** — what GameStop actually nets after selling — not raw market quantiles. A model that says "buy at $200" when the card sells for $220 on eBay is a money-loser after fees, shipping, and returns.
+> **Critical:** Thresholds are based on **net realizable value (NRV)** — what GameStop actually nets after selling — not raw market quantiles.
 
-```python
-# Retail economics constants (adjust per channel)
-MARKETPLACE_FEE_PCT = 0.13    # eBay ~13%, COMC ~10%, in-store ~0%
-SHIPPING_COST = 5.00           # Average shipping + handling
-AUTHENTICATION_COST = 0.00     # Already graded
-RETURN_RATE = 0.03             # ~3% return/fraud rate
-REQUIRED_MARGIN = 0.20         # 20% minimum gross margin
-
-def compute_nrv(fair_value, channel='ebay'):
-    """Net Realizable Value — what GameStop actually nets after a sale."""
-    gross = fair_value * (1 - MARKETPLACE_FEE_PCT)
-    net_after_returns = gross * (1 - RETURN_RATE)
-    nrv = net_after_returns - SHIPPING_COST
-    return nrv
-
-def make_pricing_decision(card, models, offered_price):
-    preds = {q: models[q].predict(card.features) for q in quantiles}
-
-    fair_value = np.exp(preds[0.50])
-    p20 = np.exp(preds[0.20])
-    p80 = np.exp(preds[0.80])
-    uncertainty = (np.exp(preds[0.90]) - np.exp(preds[0.10])) / fair_value
-
-    # NRV-based thresholds — what GameStop nets, not what the market says
-    nrv = compute_nrv(fair_value)
-    max_buy_price = nrv * (1 - REQUIRED_MARGIN)  # Max price to achieve target margin
-
-    if offered_price < max_buy_price:
-        margin = (nrv - offered_price) / nrv
-        if uncertainty < 0.30:
-            return 'STRONG_BUY', fair_value, nrv, margin, uncertainty
-        else:
-            return 'REVIEW_BUY', fair_value, nrv, margin, uncertainty  # Human review
-    elif offered_price > p80:
-        return 'SELL_SIGNAL', fair_value, nrv, 0, uncertainty
-    else:
-        return 'FAIR_VALUE', fair_value, nrv, 0, uncertainty
-```
+Economics constants (implemented in `PricingRecommendationAgent`): marketplace fee 13%, shipping $5, return rate 3%, required margin 20%. NRV = `fair_value * (1 - fee) * (1 - return_rate) - shipping`. Max buy price = `NRV * (1 - required_margin)`.
 
 ---
 
@@ -385,25 +283,25 @@ def make_pricing_decision(card, models, offered_price):
 
 ```
 Reddit API (r/pokemontcg, r/baseballcards, etc.)
-Twitter/X Filtered Stream (#PokemonTCG, #SportsCards)
         │
         ▼
 ┌─────────────────────────────────────────┐
-│  NLP Pipeline                            │
+│  NLP Pipeline (Workers AI)              │
 │                                          │
 │  1. Card Mention Extraction (NER)        │
 │     "That Charizard PSA 10 is fire"      │
 │     → card: Charizard, grade: PSA 10     │
 │                                          │
 │  2. Sentiment Classification             │
-│     FinBERT fine-tuned on collectibles    │
+│     Workers AI (Llama 3.1 8B +           │
+│     DistilBERT) at the edge              │
 │     → bullish (0.85)                     │
 │                                          │
 │  3. Hype Detection                       │
 │     Volume spike + positive sentiment    │
 │     → HYPE_ALERT: Charizard PSA 10       │
 │                                          │
-│  4. Aggregation                          │
+│  4. Aggregation (hourly cron)            │
 │     Rolling 24h / 7d / 30d scores        │
 │     Weighted by engagement (upvotes)     │
 └──────────────────┬──────────────────────┘
@@ -412,6 +310,8 @@ Twitter/X Filtered Stream (#PokemonTCG, #SportsCards)
          D1 sentiment_scores table
          → Feeds into ML feature pipeline
 ```
+
+**Note:** Twitter/X integration is **DEFERRED**. v1 uses Reddit only.
 
 ### 4.2 Target Subreddits
 
@@ -425,21 +325,9 @@ Twitter/X Filtered Stream (#PokemonTCG, #SportsCards)
 | r/sportscards | ~30K | General sports | ~80 posts/day |
 | r/TradingCardCommunity | ~15K | General TCG | ~50 posts/day |
 
-**Combined:** ~2,000-5,000 posts/day, 15,000-40,000 comments/day.
-**Reddit API cost:** Free tier (100 RPM) is sufficient for polling. Standard tier ($12K/yr) required for commercial use.
-**Twitter/X cost:** ~$500-1K/month at pay-per-use rates for ~100K tweet reads/month.
-
 ### 4.3 Viral Event Detection
 
-Social media sentiment's biggest value isn't gradual trend detection — it's **catching viral moments** before they hit prices:
-
-- Influencer pulls a rare card on YouTube/TikTok → 24-48hr price spike
-- New set announcement → immediate pre-order pricing impact
-- Player injury/trade → sports card price crash within hours
-- Ban list update → competitive TCG card values crash immediately
-- Celebrity endorsement → category-wide hype
-
-**Detection:** If `social_mention_count_24h > 3 * social_mention_avg_7d` AND `sentiment > 0.5`, trigger an alert and re-price affected cards within 1 hour instead of waiting for daily batch.
+Social media sentiment's biggest value is **catching viral moments** before they hit prices. The **PriceMonitorAgent** implements this: if social mentions in a 6-hour window exceed 3x the 7-day rolling average, it fires a `viral_social` alert and invalidates the KV price cache for affected cards.
 
 ---
 
@@ -447,13 +335,11 @@ Social media sentiment's biggest value isn't gradual trend detection — it's **
 
 ### 5.1 Seller-Side Anomaly Detection
 
-> **Data limitation:** The proposed data sources (SoldComps, CardHedger, PriceCharting) return sold-listing summaries, not bid-level event data. True shill-bidding detection (bid-timing patterns, bidder-seller relationship analysis, bid-increment analysis) is **not feasible** without a bid-history feed. The detection below is scoped to what sold-listing data actually supports.
-
-> **Assumption:** `seller_id` availability from licensed feeds (SoldComps, CardHedger) should be verified before relying on seller concentration analysis. If `seller_id` is not consistently exposed, fall back to price-only statistical outlier detection.
+> **Data limitation:** SoldComps, CardHedger, and PriceCharting return sold-listing summaries, not bid-level event data. True shill-bidding detection is not feasible without a bid-history feed.
 
 ```
 What we CAN detect from sold listings:
-├── Seller price inflation — sellers consistently above market average (via seller_id if available)
+├── Seller price inflation — sellers consistently above market (via seller_id if available)
 ├── Statistical price outliers — IQR-based detection on price vs. historical average
 ├── Suspicious pricing patterns — high-value graded cards at <$1 (data quality)
 └── Price spike/crash detection — 7d vs 30d moving average divergence > 30%
@@ -465,73 +351,36 @@ What we CANNOT detect without bid-event data:
 └── Buyer-seller relationship graphs
 
 Model: Statistical outlier detection + seller concentration (if seller_id available)
-Action: Flag price for exclusion from training data, create alert for human review
+Action: Flag price_observations.is_anomaly = true, exclude from training/features
 ```
 
-### 5.2 Data Quality Issues in Scraped Prices
+Anomaly detection runs daily at **4 AM UTC** (before features at 5 AM, predictions at 6 AM) so flagged outliers are excluded from downstream computation.
 
-**The "Best Offer Accepted" problem:** eBay shows the listing price for "Best Offer Accepted" sales, not the actual accepted price. Typical accepted offers are 75-85% of listing price. This biases the model **upward by 15-25%** if not handled.
+### 5.2 Data Quality Issues
 
-**Fix:** Flag best-offer sales and apply a discount factor (0.80x), or exclude them from training.
-
-**Lot sales:** "Pokemon lot 50 cards" at $25 is NOT a $25 price point for any individual card. Filter via keyword detection: lot, bundle, collection, set of, x2, x3.
-
-**Currency normalization:** International eBay sales in GBP/EUR/AUD must be converted to USD at the sale date exchange rate.
-
-### 5.3 Market Manipulation Detection
-
-```
-Pump and Dump Pattern:
-1. Sudden social media spike (coordinated posts)
-2. Price spike with concentrated sellers (1-2 accounts) — requires seller_id
-3. Volume spike (wash trading between related accounts) — limited detectability
-4. Price crash after hype fades
-
-Detection (scoped to available data):
-├── Temporal clustering of social mentions (Reddit/Twitter pipeline)
-├── Price-volume divergence (price spike without proportional sales increase)
-├── Seller concentration analysis (IF seller_id available from feeds)
-└── Price spike followed by crash pattern (statistical, no account-level data needed)
-
-Action: Flag card for human review, exclude from model updates
-```
+- **"Best Offer Accepted" bias:** eBay shows listing price, not accepted price. Biases upward 15-25%. Fix: flag and discount by 20%, or exclude.
+- **Lot sales:** Filter via keyword detection (lot, bundle, collection, set of, x2, x3).
+- **Currency normalization:** International sales in GBP/EUR/AUD must be converted to USD at the sale date exchange rate.
 
 ---
 
 ## 6. Backtesting & Evaluation
 
-### 6.1 Walk-Forward Validation (The Only Valid Approach)
+### 6.1 Walk-Forward Validation
 
-**Never use random train/test splits for time series data.** Always train on past, test on future.
-
-> **Data availability caveat:** Full walk-forward validation requires sufficient history for multiple train/test folds. At launch, SoldComps provides 365 days and eBay Insights provides 90 days of raw transaction data — barely enough for one 12m/1m split. PriceCharting provides all-time aggregated daily prices, which supports walk-forward on price-level features but **cannot** validate transaction-level features (velocity, bid count, seller patterns). Plan for two backtesting phases: (1) launch with PriceCharting backfill + reduced feature set, (2) full walk-forward after 6+ months of raw data accumulation.
-
-```
-|--- Train (12 months) ---|--- Test (1 month) ---|
-                          |--- Train (13 months) ---|--- Test (1 month) ---|
-                                                    |--- Train (14 months) ---|...
-```
+**Never use random train/test splits for time series data.** Always train on past, test on future. Full walk-forward requires 6+ months of raw transaction data. At launch, use PriceCharting backfill with reduced feature set.
 
 ### 6.2 Metrics
 
-| Metric | What It Measures | Target |
-|--------|-----------------|--------|
-| **MdAPE** (Median Absolute % Error) | Typical error, robust to outliers | <15% high-vol, <25% mid-vol, <40% low-vol |
-| **MAE** | Average absolute dollar error | Depends on price range |
-| **Directional Accuracy** | Did we predict up/down correctly? | >60% |
-| **Coverage** | % of actuals within prediction interval | 87-93% for 90% CI |
-| **Interval Width %** | How wide are the intervals? | <30% for high-vol |
-| **Simulated Trading P&L** | If we bought/sold on model signals | Positive over backtest |
+| Metric | Target |
+|--------|--------|
+| **MdAPE** (Median Absolute % Error) | <15% high-vol, <25% mid-vol, <40% low-vol |
+| **Directional Accuracy** | >60% |
+| **Coverage** (90% CI) | 87-93% |
+| **Interval Width %** | <30% for high-vol |
+| **Simulated Trading P&L** | Positive over backtest |
 
-**Critical:** Report metrics **stratified by volume bucket.** A model that's 95% accurate on high-volume Charizards but 60% accurate on everything else is useless for GameStop's long-tail inventory.
-
-### 6.3 What NOT to Do
-
-- **Don't use RMSE.** Fat-tailed price distributions make it meaningless.
-- **Don't use random train/test splits.** Leaks future information.
-- **Don't report aggregate accuracy.** Always stratify by volume.
-- **Don't ignore the Best Offer bias.** It inflates prices 15-25%.
-- **Don't start with deep learning.** LightGBM will outperform until you have very clean data and >100K training samples.
+**Critical:** Report metrics **stratified by volume bucket.**
 
 ---
 
@@ -539,166 +388,357 @@ Action: Flag card for human review, exclude from model updates
 
 ### 7.1 Technology Stack
 
-| Layer | Technology | Why |
-|-------|-----------|-----|
-| **Data Storage** | Cloudflare D1 (SQLite) | Edge-deployed, zero cold starts, ~$5-20/mo |
-| **Cache** | Cloudflare KV | Hot price lookups, token caching, rate limiting |
-| **Object Storage** | Cloudflare R2 | Raw data archive, ONNX model artifacts (S3-compatible) |
-| **Orchestration** | Cloudflare Cron Triggers + Queues | Built-in scheduling, async batch processing |
-| **ML Training** | LightGBM, scikit-learn (offline) | Run on Modal/Railway/local, export to ONNX |
-| **ML Serving** | Batch predictions via R2 + statistical fallback | Pre-scored JSON loaded at edge, sub-5ms lookups |
-| **Experiment Tracking** | MLflow (local/self-hosted) | Model versioning, metric logging |
-| **Monitoring** | Cloudflare Analytics Engine + ingestion_log table | Pipeline health, built-in Workers analytics |
-| **NLP (Sentiment)** | Workers AI (Llama 3.1 8B + DistilBERT) | NER extraction + sentiment classification at edge |
-| **Frontend** | Vite + React + Tailwind v4 on Cloudflare Pages | Edge-deployed dashboard, GameStop-style UI |
-| **Infrastructure** | Cloudflare Workers (Hono framework) | Global edge deployment, no servers to manage |
+| Layer | Technology | Status |
+|-------|-----------|--------|
+| **Runtime** | Cloudflare Workers (Hono framework) | **Shipped** |
+| **Data Storage** | Cloudflare D1 (SQLite at edge) | **Shipped** |
+| **Cache** | Cloudflare KV (hot price lookups, rate limiting) | **Shipped** |
+| **Object Storage** | Cloudflare R2 (data archive, model artifacts) | **Shipped** |
+| **Queues** | Cloudflare Queues (gamecards-ingestion, gamecards-sentiment) | **Shipped** |
+| **Orchestration** | Cloudflare Cron Triggers (8 schedules) | **Shipped** |
+| **Agents** | Cloudflare Durable Objects (Agents SDK) | **Shipped** — 4 agents |
+| **NLP** | Workers AI (Llama 3.1 8B Instruct + DistilBERT) | **Shipped** |
+| **ML Training** | LightGBM + scikit-learn (offline, Python) | **Shipped** |
+| **ML Export** | ONNX via onnxmltools/skl2onnx → R2 | **Shipped** |
+| **ML Serving** | Batch predictions (R2 JSON → D1 model_predictions) | **Shipped** |
+| **Experiment Tracking** | MLflow (local/self-hosted) | **Shipped** |
+| **Frontend** | Vite + React + Tailwind v4 + React Router | **Shipped** |
+| **Auth** | API key middleware on `/v1/*` + agent routes | **Shipped** |
+| **CI** | GitHub Actions (typecheck, lint, Python syntax) | **Shipped** |
+| **Retraining** | GitHub Actions weekly cron (Sunday 2 AM UTC) | **Shipped** |
+| **Monitoring** | Cloudflare Analytics + `ingestion_log` table | **Shipped** |
+| **A/B Testing** | Model comparison framework | **DEFERRED** |
+| **GameStop Integration** | Internal DB for trade-in/inventory data | **DEFERRED** |
 
 ### 7.1.1 Security & Authentication
 
-> **Required before production deployment:**
->
-> - **API authentication:** Cloudflare Access or API key middleware on all `/v1/*` routes. Dashboard requires GameStop SSO.
-> - **CORS restriction:** Lock to GameStop domains only (remove `cors("*")`).
-> - **Rate limiting:** Cloudflare rate limiting rules or KV-based per-key throttling.
-> - **Secrets management:** All API keys stored via `wrangler secret put`, never in code or `.env`.
-> - **Data privacy:** `seller_id` should be hashed before storage. Reddit `post_url` is public data. No PII collected from end users.
-> - **D1 access:** Restricted to Workers bindings only — no public database endpoint.
+Implemented:
+- **API key auth:** All `/v1/*` routes require `X-API-Key` header (middleware in `auth.ts`). Bypassed in development environment.
+- **Agent auth:** All `/agents/*` routes also gated by the same API key in non-development environments.
+- **Rate limiting:** KV-based per-key throttling middleware on `/v1/*`.
+- **Secrets management:** All API keys stored via `wrangler secret put` — `SOLDCOMPS_API_KEY`, `PRICECHARTING_API_KEY`, `CARDHEDGER_API_KEY`, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `POKEMON_PRICE_TRACKER_KEY`, `API_KEY`.
+- **D1 access:** Restricted to Workers bindings only — no public database endpoint.
 
-### 7.2 API Design
+Required before production:
+- **CORS restriction:** Lock to GameStop domains only (currently `cors("*")`).
+- **GameStop SSO:** Dashboard should require GameStop SSO for production.
+- **Data privacy:** `seller_id` should be hashed before storage.
 
+### 7.2 API Endpoints
+
+All endpoints are under `/v1/` and require API key authentication (except the root health check).
+
+**Root Health Check:**
 ```
-GET  /v1/price/{card_id}?grade=PSA10
-     → { price: 245.00, lower: 210.00, upper: 290.00,
-         confidence: "HIGH", last_sale: "2026-04-10",
-         sales_30d: 12, trend: "rising" }
+GET  /
+     → { service, version, status: "healthy"|"degraded", environment,
+         auth, predictions: "fresh"|"stale" }
+     Checks model_predictions freshness (stale if >36 hours old).
+```
 
-GET  /v1/history/{card_id}?grade=PSA10&days=90
+**Cards:**
+```
+GET  /v1/cards                    — List/search card catalog
+GET  /v1/cards/:id                — Get single card details
+```
+
+**Prices:**
+```
+GET  /v1/price/:card_id?grade=&grading_company=
+     → { card_id, card_name, grade, grading_company, price, lower, upper,
+         buy_threshold, sell_threshold, confidence, last_sale, sales_30d,
+         trend, updated_at, has_prediction }
+     Returns model prediction if available, statistical fallback otherwise.
+```
+
+**History:**
+```
+GET  /v1/history/:card_id?grade=&days=
      → [{ date, price, source, sale_type }, ...]
-
-GET  /v1/sentiment/{card_id}
-     → { score: 0.72, mentions_7d: 47, trend: "spiking",
-         top_posts: [...] }
-
-POST /v1/evaluate
-     → { card_id, offered_price }
-     ← { decision: "STRONG_BUY", fair_value: 245, margin: 22%,
-         confidence: "HIGH", reasoning: "Below p20 threshold" }
-
-GET  /v1/alerts/active
-     → [{ card_id, alert_type: "PRICE_SPIKE", magnitude: "+35%",
-          trigger: "viral_tiktok", timestamp }]
-
-GET  /v1/market/index
-     → { pokemon_index: 1247, sports_index: 893,
-         trend_30d: "+4.2%", volatility: "moderate" }
 ```
+
+**Sentiment:**
+```
+GET  /v1/sentiment/:card_id
+     → { score, mention_count, period, top_posts, computed_at }
+```
+
+**Evaluate (Buy/Sell Decision):**
+```
+POST /v1/evaluate
+     Body: { card_id, offered_price, grade?, grading_company? }
+     → { decision: "STRONG_BUY"|"REVIEW_BUY"|"FAIR_VALUE"|"SELL_SIGNAL",
+         fair_value, margin, confidence, reasoning }
+```
+
+**Alerts:**
+```
+GET  /v1/alerts                   — Active alerts
+POST /v1/alerts/:id/resolve       — Resolve an alert
+```
+
+**Market:**
+```
+GET  /v1/market/index
+     → { pokemon_index, sports_index, trend_30d, volatility, updated_at }
+```
+
+**System (operational):**
+```
+GET  /v1/system/health            — Pipeline health (prediction freshness, model version,
+                                    ingestion status, catalog count)
+GET  /v1/system/model             — Current model metadata from R2
+POST /v1/system/rollback          — Full rollback: copies versioned predictions from R2,
+                                    re-imports into D1, invalidates KV cache, updates meta
+     Body: { version_key: "models/versions/..." }
+POST /v1/system/bootstrap         — Bootstrap card catalog from PriceCharting
+```
+
+**Agents (REST proxy for Durable Object @callable methods):**
+```
+GET  /v1/agents/monitor/status
+POST /v1/agents/monitor/check
+
+GET  /v1/agents/intelligence/latest
+POST /v1/agents/intelligence/generate
+
+GET  /v1/agents/competitors/status
+GET  /v1/agents/competitors/gaps
+POST /v1/agents/competitors/scan
+
+GET  /v1/agents/recommendations/pending?action=BUY|SELL|REPRICE
+GET  /v1/agents/recommendations/status
+POST /v1/agents/recommendations/generate
+POST /v1/agents/recommendations/:id/approve   Body: { approvedBy? }
+POST /v1/agents/recommendations/:id/reject    Body: { rejectedBy? }
+```
+
+Agents are also accessible via WebSocket using the Agents SDK `useAgent()` hook from the dashboard.
+
+### 7.3 Autonomous Agents (Durable Objects)
+
+Four Durable Object agents run autonomously alongside the cron pipeline. Each uses the Cloudflare Agents SDK with hibernation, automatic retry, and real-time state sync via WebSocket.
+
+#### 7.3.1 PriceMonitorAgent
+
+**Purpose:** Detects price anomalies and viral social events in real time, triggers cache invalidation for affected cards.
+
+| Property | Value |
+|----------|-------|
+| Schedule | `scheduleEvery(900)` — every 15 minutes |
+| Hibernate | Yes |
+| Retry | 3 attempts, 1-30s backoff |
+| Max alerts | 100 (validated on state change) |
+
+**State:** `lastCheckAt`, `activeAlerts[]`, `checksRun`, `anomaliesDetected`
+
+**Callable methods:**
+- `runMonitoringCheck()` — Queries D1 for 30% 1d-vs-30d price divergence + viral social mentions (>3x 7d average in 6h). Writes `price_alerts` rows. Invalidates KV cache for affected cards.
+- `getStatus()` — Returns last check time, alert counts, recent alerts.
+- `clearAlerts()` — Clears active alerts.
+- `listSchedules()` / `cancelTask(id)` — Schedule management.
+
+#### 7.3.2 MarketIntelligenceAgent
+
+**Purpose:** Generates daily AI-powered market briefings using Workers AI (Llama 3.1 8B).
+
+| Property | Value |
+|----------|-------|
+| Schedule | `schedule("0 7 * * *")` — daily at 7 AM |
+| Hibernate | Yes |
+| Retry | 2 attempts, 5-60s backoff |
+| Reports stored | Last 30 |
+
+**State:** `reports[]`, `lastGeneratedAt`, `totalReports`
+
+**Callable methods:**
+- `generateDailyReport()` — Queries D1 for top gainers/decliners (7d), active alerts, sentiment summary, volume stats. Sends to Llama 3.1 8B for prose summary. Returns `MarketReport` with highlights, top movers, and market sentiment (bullish/bearish/neutral).
+- `getLatestReport()` — Most recent report.
+- `getReportHistory(count)` — Last N reports (default 7).
+- `getStatus()` — Generation stats.
+
+#### 7.3.3 CompetitorTrackerAgent
+
+**Purpose:** Scans for price gaps between GameStop's fair value and competitor prices (PriceCharting, CardHedger, SoldComps).
+
+| Property | Value |
+|----------|-------|
+| Schedule | `scheduleEvery(21600)` — every 6 hours |
+| Hibernate | Yes |
+| Retry | 3 attempts, 2-30s backoff |
+| Max gaps tracked | 50 |
+
+**State:** `lastScanAt`, `priceGaps[]`, `scansCompleted`, `opportunitiesFound`
+
+**Callable methods:**
+- `scanCompetitorPrices()` — Compares top 100 cards' `model_predictions.fair_value` against recent `price_observations` from external sources. Flags gaps >15%. Matches on grade+grading_company to avoid false gaps.
+- `getOverpriced(limit)` / `getUnderpriced(limit)` — Filtered gap lists.
+- `getAllGaps()` — All gaps sorted by magnitude.
+- `getStatus()` — Scan stats with overpriced/underpriced counts.
+
+#### 7.3.4 PricingRecommendationAgent
+
+**Purpose:** Generates actionable BUY/SELL/REPRICE recommendations with human-in-the-loop approval workflow.
+
+| Property | Value |
+|----------|-------|
+| Schedule | `schedule("0 8 * * *")` — daily at 8 AM (recommendations) |
+|          | `scheduleEvery(21600)` — every 6h (expire stale) |
+| Hibernate | Yes |
+| Retry | 2 attempts, 5-60s backoff |
+| Max pending | 200 (validated on state change) |
+
+**State:** `pending[]`, `history[]`, `lastGeneratedAt`, `stats` (totalGenerated/Approved/Rejected/Expired)
+
+**Economics constants:** `MARKETPLACE_FEE = 13%`, `SHIPPING_COST = $5`, `RETURN_RATE = 3%`, `REQUIRED_MARGIN = 20%`
+
+**Callable methods:**
+- `generateRecommendations()` — For all HIGH/MEDIUM confidence predictions with fair_value > $10: computes NRV, generates BUY (market < max buy price), SELL (market > sell threshold), or REPRICE (near breakeven). Top 50 by margin, sorted.
+- `approveRecommendation(id, approvedBy)` — Moves to history as approved.
+- `rejectRecommendation(id, rejectedBy)` — Moves to history as rejected.
+- `getPending(action?)` — Filter pending by action type.
+- `getHistory(limit)` — Approval/rejection history.
+- `getStatus()` — Pending counts by action, stats.
+- `expireStaleRecommendations()` — Auto-expires pending recs older than 48 hours.
 
 ---
 
 ## 8. Implementation Roadmap
 
-### Phase 1: Foundation (Weeks 1-4)
+### Phase 1: Foundation — DONE
 
-| Week | Deliverable |
-|------|-------------|
-| 1 | D1 schema + migrations, SoldComps API integration, first eBay data flowing |
-| 2 | PriceCharting API integration, PSA population scraping via GemRate |
-| 3 | Feature engineering pipeline (grade, velocity, price history features) |
-| 4 | LightGBM v1 trained on PriceCharting historical backfill + SoldComps 365-day data, initial backtest results |
+| Deliverable | Status |
+|-------------|--------|
+| D1 schema + migrations | Done |
+| SoldComps API integration (every 15 min) | Done |
+| PriceCharting API integration (daily) | Done |
+| PSA population scraping (daily) | Done |
+| Feature engineering pipeline | Done |
+| LightGBM quantile regression training pipeline | Done |
+| ONNX export + R2 upload | Done |
+| Batch scoring CLI | Done |
 
-> **Cold-start caveat:** On day one, eBay Marketplace Insights provides only 90 days and SoldComps provides 365 days of raw transaction data. This is barely enough for one 12m/1m walk-forward split. Full walk-forward backtesting (multiple folds) requires either: (a) backfilling from PriceCharting's historical CSV, which provides all-time aggregated pricing — sufficient for price-level features but **not** for transaction-level features like velocity, bid count, or seller concentration; or (b) waiting 6+ months to accumulate enough raw data. The Week 4 backtest should use PriceCharting backfill with the reduced feature set that aggregated data can support, and clearly report which features were available vs. imputed.
+### Phase 2: Intelligence — DONE
 
-**Exit criteria:** Model trained on available data (PriceCharting backfill + SoldComps), MdAPE <20% on high-volume cards using the reduced feature set, price history for 50K+ cards stored. Walk-forward validation limited to available history depth.
+| Deliverable | Status |
+|-------------|--------|
+| Reddit sentiment pipeline (NER + classification via Workers AI) | Done |
+| Sentiment rollup (24h/7d/30d, hourly cron) | Done |
+| Anomaly detection (daily, before features) | Done |
+| Conformal prediction intervals | Done |
+| Volume-aware routing (high/medium/low buckets) | Done |
+| Buy/sell decision API (`POST /v1/evaluate`) | Done |
+| Hono/Workers API serving layer with auth | Done |
 
-### Phase 2: Intelligence (Weeks 5-8)
+### Phase 3: Production — DONE
 
-| Week | Deliverable |
-|------|-------------|
-| 5 | Reddit sentiment pipeline (NER + classification) |
-| 6 | Anomaly detection (price outliers, seller concentration if seller_id available, data quality filters) |
-| 7 | Conformal prediction intervals, volume-aware routing |
-| 8 | Buy/sell decision API, Hono/Workers serving layer |
+| Deliverable | Status |
+|-------------|--------|
+| React dashboard (market overview, card detail, search, evaluate, alerts) | Done |
+| Pipeline health monitoring (`/v1/system/health`, `ingestion_log`) | Done |
+| Model rollback system (`POST /v1/system/rollback`) | Done |
+| Automated weekly retraining (GitHub Actions, Sunday 2 AM) | Done |
+| CI pipeline (typecheck, lint, Python syntax check) | Done |
+| Price alerts system (spike, crash, viral, anomaly, new high/low) | Done |
+| KV price cache with automatic invalidation | Done |
 
-**Exit criteria:** Full pipeline running daily, sentiment features improving model by measurable delta, API serving prices with confidence intervals.
+### Phase 4: Agentic Layer — DONE
 
-### Phase 3: Production (Weeks 9-12)
+| Deliverable | Status |
+|-------------|--------|
+| PriceMonitorAgent (anomaly + viral detection, every 15 min) | Done |
+| MarketIntelligenceAgent (daily AI market briefing) | Done |
+| CompetitorTrackerAgent (price gap scanning, every 6h) | Done |
+| PricingRecommendationAgent (BUY/SELL/REPRICE with approval workflow) | Done |
+| Agent REST proxy + WebSocket access | Done |
+| Agent dashboard page in frontend | Done |
 
-| Week | Deliverable |
-|------|-------------|
-| 9 | React dashboard (price curves, sentiment, alerts) |
-| 10 | Cloudflare Analytics monitoring, model drift detection, alerting |
-| 11 | A/B testing framework, automated retraining pipeline |
-| 12 | GameStop-specific features (trade-in data, inventory), integration with pricing system |
+### Remaining Work
 
-**Exit criteria:** Production system updating prices daily, dashboard live, alerts working, integrated with GameStop's e-commerce platform.
-
-### Phase 4: Agentic Layer (Weeks 13-16)
-
-| Week | Deliverable |
-|------|-------------|
-| 13 | Price monitoring agent (watches for anomalies, triggers re-pricing) |
-| 14 | Market intelligence agent (summarizes daily market movements) |
-| 15 | Competitor price tracking agent (monitors TCGPlayer, COMC, eBay) |
-| 16 | Automated pricing recommendations with human approval workflow |
+| Item | Priority | Notes |
+|------|----------|-------|
+| Twitter/X sentiment integration | P2 | ~$500-1K/mo, filtered stream |
+| GameStop internal data integration (trade-ins, inventory, foot traffic) | P1 | Requires internal DB access |
+| A/B testing framework (model comparison) | P2 | Compare model versions on live traffic |
+| Model drift detection + automated alerts | P2 | Track prediction accuracy over time |
+| CORS lockdown to GameStop domains | P0 | Currently `cors("*")` |
+| GameStop SSO for dashboard | P1 | Production auth |
+| eBay Marketplace Insights API access | P1 | Negotiate via retail partnership |
+| TCGPlayer API integration | P2 | Requires application approval |
+| Hierarchical Bayesian / GP models for low-volume | P3 | LightGBM with fallback is v1 |
+| Temporal Fusion Transformer for high-volume | P3 | Research item |
+| D1 archival strategy implementation | P2 | Needed at ~6 months |
 
 ---
 
 ## 9. Competitive Landscape
 
-| | PriceCharting | Card Ladder (PSA) | Alt | **GameStop (Proposed)** |
+| | PriceCharting | Card Ladder (PSA) | Alt | **GameStop (v1 Shipped)** |
 |---|---|---|---|---|
-| **Data sources** | eBay + own marketplace | 14 platforms | Multiple | eBay + Reddit + PSA pop + **store data** |
-| **ML pricing** | Algorithmic smoothing (no ML) | Unknown | Likely gradient boosting | LightGBM quantile regression (batch) + statistical serving |
-| **Sentiment** | None | None | Unknown | Reddit + Twitter NLP |
-| **Update frequency** | Daily | Near real-time | Near real-time | Hybrid (daily + event-driven) |
-| **Uncertainty** | None | None | None | Conformal prediction intervals |
-| **Physical retail data** | No | No | No | **Yes — trade-ins, foot traffic, inventory** |
-| **Anomaly detection** | Manual review | Unknown | Unknown | Automated (price-level outliers, seller concentration, data quality) |
+| **Data sources** | eBay + own marketplace | 14 platforms | Multiple | SoldComps + PriceCharting + PSA pop + Reddit |
+| **ML pricing** | Algorithmic smoothing (no ML) | Unknown | Likely gradient boosting | LightGBM quantile regression (batch) + statistical fallback |
+| **Sentiment** | None | None | Unknown | Reddit NLP (Workers AI) |
+| **Update frequency** | Daily | Near real-time | Near real-time | Hybrid: 15-min ingestion + daily model + 15-min agent monitoring |
+| **Uncertainty** | None | None | None | Conformal prediction intervals (p10-p90) |
+| **Physical retail data** | No | No | No | **DEFERRED** — requires internal integration |
+| **Anomaly detection** | Manual review | Unknown | Unknown | Automated (IQR outliers, data quality, viral detection) |
+| **Autonomous agents** | No | No | No | 4 agents (monitor, intelligence, competitors, recommendations) |
+| **Buy/sell decisions** | No | No | Unknown | NRV-based with margin targets + human approval workflow |
 
-**GameStop's unfair advantage:** The combination of online market data + physical store trade-in/inventory data + grading submission volume. No online-only competitor can replicate this.
+**Honest assessment:** v1 does not yet have GameStop's "unfair advantage" (internal store data). The moat exists but is not yet plumbed. What ships is a best-in-class ML pricing engine with uncertainty quantification and autonomous monitoring — competitive with or ahead of Alt/Card Ladder on technical sophistication, behind on data breadth until internal data is connected.
 
 ---
 
-## 10. Cost Estimate
+## 10. Cost Estimate (Cloudflare Stack)
 
 ### Monthly Operating Costs
 
-| Item | Cost/Month |
-|------|-----------|
-| SoldComps API (Scale) | $59 |
-| CardHedger API | $49 |
-| PriceCharting (Legendary) | ~$25 |
-| PokemonPriceTracker (Business) | $99 |
-| Reddit API (Standard, prorated) | $1,000 |
-| Twitter/X (pay-per-use, Phase 2+) | $500 |
-| Cloudflare Workers Paid plan | $5 |
-| Cloudflare D1 + KV + R2 + Queues | ~$30-50 |
-| Cloudflare Workers AI | ~$10-50 |
-| ML training compute (Modal/Railway) | ~$20-50 |
-| MLflow (local/self-hosted) | $0-20 |
-| **Total** | **~$1,800-$1,900/month** |
+| Item | Cost/Month | Notes |
+|------|-----------|-------|
+| Cloudflare Workers Paid plan | $5 | Includes 10M requests/mo |
+| Cloudflare D1 | ~$5-15 | Based on rows read/written |
+| Cloudflare KV | ~$5-10 | Price cache + rate limiting |
+| Cloudflare R2 | ~$5-10 | Model artifacts, data archive (no egress fees) |
+| Cloudflare Queues | ~$1-5 | Two queues, moderate volume |
+| Cloudflare Workers AI | ~$10-50 | Llama 3.1 8B for reports + DistilBERT for sentiment |
+| Durable Objects (4 agents) | ~$5-15 | Billed per request + storage |
+| SoldComps API (Scale) | $59 | Primary market data |
+| CardHedger API | $49 | Multi-platform data |
+| PriceCharting (Legendary) | ~$25 | Historical/aggregated prices |
+| PokemonPriceTracker (Business) | $99 | Graded Pokemon data |
+| Reddit API (Standard, prorated) | $1,000 | Commercial use requirement |
+| GitHub Actions (retraining) | ~$0-10 | Free tier usually sufficient |
+| MLflow (local) | $0 | Self-hosted |
+| **Total** | **~$1,280-$1,360/month** |
+
+**Deferred costs (not in v1):**
+- Twitter/X API: ~$500-1K/mo
+- ML training compute (if moved to cloud): ~$20-50/mo
+- GameStop internal data pipeline: $0 (internal infra)
 
 **vs. Palantir/vendor alternative:** $100K-500K+/year for a fraction of the functionality.
-
-**vs. PriceCharting license:** They don't license their pricing engine. GameStop would be building something PriceCharting doesn't sell.
 
 ---
 
 ## 11. Key Risks & Mitigations
 
-| Risk | Mitigation |
-|------|-----------|
-| eBay API access denied | SoldComps + CardHedger as fallbacks, negotiate via GameStop's retail partnership |
-| Model accuracy insufficient for low-volume cards | Volume-aware routing, wide uncertainty bands, human review for <10 sales/quarter |
-| Social sentiment is noisy/manipulable | Weight sentiment low (1-3% of signal), use as regime detector not price predictor |
-| Price history cold start (no data before today) | Backfill from PriceCharting historical CSV, SoldComps 365-day lookback |
-| Fat-tailed prices break the model | Huber loss, log-transform, quantile regression, outlier detection |
-| eBay "Best Offer" bias | Detect and discount by 20%, or exclude from training |
-| Reddit API pricing changes | Budget for Standard tier, explore Pushshift archives for historical data |
-| D1 10GB database limit | Archive old price_observations to R2 (Parquet/CSV) at ~6 months; keep only recent windows in D1 |
-| Worker CPU time limits (30s paid) | Batch D1 writes at 90 statements; chunk large operations; use Queues for async processing |
-| KV eventual consistency across regions | Price cache TTL of 5 minutes limits staleness; critical evaluate endpoint reads D1 directly |
-| Worker 128MB memory limit | Batch predictions loaded from R2 JSON; for very large catalogs (>100K cards), paginate the batch file |
+| Risk | Severity | Mitigation |
+|------|----------|-----------|
+| eBay API access denied | High | SoldComps + CardHedger as fallbacks; negotiate via GameStop's retail partnership |
+| Model accuracy insufficient for low-volume cards | Medium | Volume-aware routing, wide uncertainty bands, human review for <10 sales/quarter |
+| Social sentiment is noisy/manipulable | Low | Weight sentiment low (1-3% of signal), use as regime detector not price predictor |
+| Price history cold start | Medium | Backfill from PriceCharting CSV, SoldComps 365-day lookback |
+| Fat-tailed prices break the model | Medium | Huber loss, log-transform, quantile regression, IQR outlier detection |
+| eBay "Best Offer" bias (+15-25%) | Medium | Detect and discount by 20%, or exclude from training |
+| Reddit API pricing changes | Low | Budget for Standard tier; sentiment is low-weight feature |
+| **D1 10GB database limit** | Medium | Archive old price_observations to R2 at ~6 months; keep only recent windows in D1 |
+| **Worker CPU time limits (30s)** | Medium | Batch D1 writes at 90 statements; chunk large operations; use Queues for async |
+| **KV eventual consistency** | Low | 5-minute TTL on price cache; evaluate endpoint reads D1 directly |
+| **Worker 128MB memory limit** | Low | Batch predictions loaded from R2 JSON; paginate for >100K cards |
+| **Durable Object single-point-of-failure** | Low | Agents use hibernation + retry with backoff; state persists across restarts |
+| **R2 model artifact corruption** | Medium | Versioned predictions in `models/versions/`; full rollback system implemented |
+| **Cron trigger overlap** | Low | Pipeline is ordered with 1-hour gaps; each stage is idempotent |
+| **CORS currently open (`*`)** | High | Must lock to GameStop domains before production |
 
 ---
 
@@ -719,12 +759,32 @@ GET  /v1/market/index
 - [CAIA: Trading Cards and the Price of Perfection](https://caia.org/blog/2021/12/02/collectibles-trading-cards-and-price-perfection)
 - [eBay Bans AI Agents — Feb 2026](https://www.valueaddedresource.net/ebay-bans-ai-agents-updates-arbitration-user-agreement-feb-2026/)
 
-**Comparable Systems:**
-- PriceCharting.com — algorithmic price aggregation
-- Card Ladder (acquired by Collectors/PSA) — multi-platform tracking
-- Alt (formerly Alt.xyz) — investment platform with ML pricing
-- StockX — sneaker/collectibles marketplace (analogous pricing challenge)
-- PWCC Marketplace — high-end card auction index
+## Appendix B: ML Training CLI
+
+The `packages/ml-training` Python package provides these CLI commands:
+
+| Command | Purpose |
+|---------|---------|
+| `gamecards-export-features` | Export features + training data from D1 via HTTP API |
+| `gamecards-train` | Train LightGBM quantile models |
+| `gamecards-export` | Export trained models to ONNX format |
+| `gamecards-backtest` | Walk-forward backtesting |
+| `gamecards-score` | Batch score all cards, upload predictions to R2 |
+
+**Automated retraining:** GitHub Actions workflow runs weekly (Sunday 2 AM UTC): export features from D1 -> train -> ONNX export -> batch score -> upload predictions to R2 -> Worker picks up within 10 minutes.
+
+## Appendix C: Frontend Pages
+
+| Route | Component | Purpose |
+|-------|-----------|---------|
+| `/` | MarketOverview | Action queue with market stats + recent alerts |
+| `/search` | SearchBar | Card search with category filtering |
+| `/card/:cardId` | CardDetail | Price history, predictions, sentiment for a card |
+| `/evaluate` | EvaluateCard | Buy/sell/hold recommendation at a given price |
+| `/alerts` | AlertsList | Alert triage with resolve controls |
+| `/agents` | AgentDashboard | Real-time agent status via WebSocket |
+
+Categories: All Cards, Pokemon, Baseball, Basketball, Football, MTG, Yu-Gi-Oh.
 
 ---
 
