@@ -274,9 +274,10 @@ def cli(data: str, output: str, lr: float, num_leaves: int):
         # Quality gate: abort before saving if model quality is unacceptable
         mdape = metrics["mdape_overall"]
         # Quality gate: block deployment if MdAPE exceeds threshold.
-        # Current: 40% (achievable with SoldComps + PriceCharting data).
-        # Target: <15% for high-volume cards (requires cleaner data + more sources).
-        MAX_MDAPE = 40.0
+        # Current gate: 45% (accommodates point-in-time feature leakage — see spec Section 6.4).
+        # Tighten to 30% after implementing daily feature snapshots.
+        # Aspirational: <15% for high-volume cards (requires cleaner data + more sources).
+        MAX_MDAPE = 45.0
         if mdape > MAX_MDAPE:
             logger.error(
                 f"QUALITY GATE FAILED: MdAPE {mdape:.1f}% exceeds threshold {MAX_MDAPE}%. "

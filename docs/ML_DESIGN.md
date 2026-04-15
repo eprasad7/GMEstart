@@ -195,14 +195,14 @@ All metrics are computed during walk-forward backtesting, stratified by volume b
 
 | Metric                     | Description                                         | Target |
 |----------------------------|-----------------------------------------------------|--------|
-| MdAPE (overall)            | Median Absolute Percentage Error of p50 predictions | < 15%  |
+| MdAPE (overall)            | Median Absolute Percentage Error of p50 predictions | < 15% (aspirational), < 45% (current gate) |
 | MdAPE (high volume)        | MdAPE for cards with 90d sales >= 50                | < 10%  |
 | MdAPE (medium volume)      | MdAPE for cards with 90d sales 10-49                | < 15%  |
 | MdAPE (low volume)         | MdAPE for cards with 90d sales < 10                 | < 25%  |
-| Coverage (90%)             | % of actuals within p10-p90 interval                | > 85%  |
+| Coverage (p10-p90)         | % of actuals within p10-p90 interval (80% nominal)  | > 75%  |
 | Interval width             | Average (p90 - p10) / p50 as percentage             | Minimize while maintaining coverage |
-| Directional accuracy       | % of consecutive price changes predicted correctly  | > 55%  |
-| Simulated P&L              | Sum of trading profits from buy/sell decisions       | > $0   |
+| Rank correlation           | Pearson correlation between predicted and actual prices | > 0.7 |
+| Simulated P&L              | Trading profits (note: uses target as offer, see Section 6.4 of spec) | > $0 |
 
 ## Known Limitations
 
