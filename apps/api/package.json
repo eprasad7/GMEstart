@@ -6,6 +6,8 @@
     "deploy": "wrangler deploy",
     "deploy:prod": "wrangler deploy --env production",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "db:migrate": "wrangler d1 migrations apply gamecards-db --local",
     "db:migrate:prod": "wrangler d1 migrations apply gamecards-db --remote --env production"
   },
@@ -16,6 +18,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250410.0",
     "typescript": "^5.8.0",
+    "vitest": "^4.1.4",
     "wrangler": "^4.10.0"
   }
 }

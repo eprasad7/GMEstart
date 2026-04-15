@@ -38,7 +38,7 @@ const CATEGORIES = [
 ] as const;
 
 const navTabs = [
-  { path: "/", label: "Dashboard", icon: LayoutDashboard },
+  { path: "/", label: "Action Queue", icon: LayoutDashboard },
   { path: "/search", label: "Card Search", icon: Search },
   { path: "/evaluate", label: "Evaluate", icon: Calculator },
   { path: "/alerts", label: "Alerts", icon: Bell },

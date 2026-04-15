@@ -30,6 +30,9 @@ jobs:
       - name: Typecheck Web
         run: pnpm --filter web typecheck
 
+      - name: Run API tests
+        run: pnpm --filter api test
+
   python-lint:
     name: Python Lint
     runs-on: ubuntu-latest

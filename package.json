@@ -10,7 +10,8 @@
     "db:migrate": "pnpm --filter api db:migrate",
     "db:migrate:prod": "pnpm --filter api db:migrate:prod",
     "typecheck": "pnpm -r typecheck",
-    "ci": "pnpm typecheck"
+    "test": "pnpm --filter api test",
+    "ci": "pnpm typecheck && pnpm test"
   },
   "engines": {
     "node": ">=20"
