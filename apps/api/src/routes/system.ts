@@ -1,6 +1,9 @@
 import { Hono } from "hono";
 import type { Env } from "../types";
 import { bootstrapCatalog } from "../services/ingestion/bootstrap";
+import { archiveOldObservations } from "../services/archive";
+import { importGameStopInternalSnapshot, importPartnerPriceSnapshot } from "../services/ingestion/data-import";
+import { searchAndImportCards } from "../services/ingestion/pricecharting";
 
 export const systemRoutes = new Hono<{ Bindings: Env }>();
 
@@ -11,7 +14,7 @@ export const systemRoutes = new Hono<{ Bindings: Env }>();
  * ingestion status, and whether pricing data is stale.
  */
 systemRoutes.get("/health", async (c) => {
-  const [predictionMeta, latestPrediction, latestIngestion, cardCount] = await Promise.all([
+  const [predictionMeta, latestPrediction, latestIngestion, cardCount, latestMonitoring, latestArchive] = await Promise.all([
     c.env.MODELS.get("models/predictions_meta.json").then(async (obj) => {
       if (!obj) return null;
       return obj.json() as Promise<{
@@ -29,6 +32,18 @@ systemRoutes.get("/health", async (c) => {
        ORDER BY completed_at DESC LIMIT 5`
     ).bind().all(),
     c.env.DB.prepare(`SELECT COUNT(*) as cnt FROM card_catalog`).bind().first(),
+    c.env.DB.prepare(
+      `SELECT model_version, sample_size, mdape_pct, coverage_90, prediction_change_rate, drift_status, message, created_at
+       FROM model_monitoring_snapshots
+       ORDER BY created_at DESC
+       LIMIT 1`
+    ).bind().first(),
+    c.env.DB.prepare(
+      `SELECT archive_type, rows_archived, archive_key, status, completed_at
+       FROM data_archive_runs
+       ORDER BY started_at DESC
+       LIMIT 1`
+    ).bind().first(),
   ]);
 
   const latestPredAt = latestPrediction?.latest as string | null;
@@ -43,9 +58,11 @@ systemRoutes.get("/health", async (c) => {
 
   // Stale if predictions older than 36 hours (or no predictions at all)
   const isStale = hoursSincePrediction === null || hoursSincePrediction > 36;
+  const driftStatus = (latestMonitoring?.drift_status as string | null) || "unknown";
+  const degradedByDrift = driftStatus === "degraded";
 
   return c.json({
-    status: isStale ? "degraded" : "healthy",
+    status: isStale || degradedByDrift ? "degraded" : driftStatus === "warning" ? "warning" : "healthy",
     predictions: {
       stale: isStale,
       latestPredictionAt: latestPredAt,
@@ -53,9 +70,30 @@ systemRoutes.get("/health", async (c) => {
       hoursSinceScoring: hoursSinceScoring !== null ? Math.round(hoursSinceScoring * 10) / 10 : null,
     },
     model: predictionMeta || null,
+    drift: latestMonitoring
+      ? {
+          modelVersion: latestMonitoring.model_version,
+          sampleSize: latestMonitoring.sample_size,
+          mdapePct: latestMonitoring.mdape_pct,
+          coverage90: latestMonitoring.coverage_90,
+          predictionChangeRate: latestMonitoring.prediction_change_rate,
+          status: latestMonitoring.drift_status,
+          message: latestMonitoring.message,
+          createdAt: latestMonitoring.created_at,
+        }
+      : null,
     catalog: {
       totalCards: (cardCount?.cnt as number) || 0,
     },
+    archive: latestArchive
+      ? {
+          type: latestArchive.archive_type,
+          rowsArchived: latestArchive.rows_archived,
+          archiveKey: latestArchive.archive_key,
+          status: latestArchive.status,
+          completedAt: latestArchive.completed_at,
+        }
+      : null,
     ingestion: {
       recentRuns: latestIngestion.results.map((r) => ({
         source: r.source,
@@ -173,4 +211,161 @@ systemRoutes.post("/bootstrap", async (c) => {
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
   }
+});
+
+/**
+ * POST /v1/system/archive
+ */
+systemRoutes.post("/archive", async (c) => {
+  try {
+    const body: { retention_days?: number; batch_size?: number } =
+      await c.req.json<{ retention_days?: number; batch_size?: number }>().catch(() => ({}));
+    const result = await archiveOldObservations(c.env, body.retention_days, body.batch_size);
+    return c.json({ status: "ok", ...result });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+  }
+});
+
+/**
+ * POST /v1/system/import/gamestop-internal
+ */
+systemRoutes.post("/import/gamestop-internal", async (c) => {
+  try {
+    const body: { object_key?: string } =
+      await c.req.json<{ object_key?: string }>().catch(() => ({}));
+    const imported = await importGameStopInternalSnapshot(c.env, body.object_key);
+    return c.json({ status: "ok", imported });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+  }
+});
+
+/**
+ * POST /v1/system/import/partner-prices
+ */
+systemRoutes.post("/import/partner-prices", async (c) => {
+  let body: { source: "ebay" | "tcgplayer"; object_key: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Expected: { source: 'ebay' | 'tcgplayer', object_key: string }" }, 400);
+  }
+
+  if (!body.object_key || (body.source !== "ebay" && body.source !== "tcgplayer")) {
+    return c.json({ error: "source and object_key are required" }, 400);
+  }
+
+  try {
+    const imported = await importPartnerPriceSnapshot(c.env, body.source, body.object_key);
+    return c.json({ status: "ok", imported, source: body.source });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+  }
+});
+
+/**
+ * POST /v1/system/seed
+ *
+ * Quick seed: search PriceCharting for cards and import them into the catalog.
+ * Great for bootstrapping a demo without uploading CSVs.
+ *
+ * Body: { queries: ["charizard", "jordan rookie", "pikachu"] }
+ */
+systemRoutes.post("/seed", async (c) => {
+  let body: { queries: string[] };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Expected: { queries: ["charizard", "pikachu", ...] }' }, 400);
+  }
+
+  if (!Array.isArray(body.queries) || body.queries.length === 0) {
+    return c.json({ error: "queries must be a non-empty array of search terms" }, 400);
+  }
+
+  let totalImported = 0;
+  const results: Array<{ query: string; imported: number }> = [];
+
+  for (const query of body.queries.slice(0, 20)) {
+    try {
+      const count = await searchAndImportCards(c.env, query, 25);
+      totalImported += count;
+      results.push({ query, imported: count });
+    } catch (err) {
+      results.push({ query, imported: 0 });
+      console.error(`Seed failed for "${query}":`, err);
+    }
+  }
+
+  return c.json({ status: "ok", totalImported, results });
+});
+
+/**
+ * GET /v1/system/experiments
+ */
+systemRoutes.get("/experiments", async (c) => {
+  const results = await c.env.DB.prepare(
+    `SELECT *
+     FROM model_experiments
+     ORDER BY created_at DESC`
+  )
+    .bind()
+    .all();
+  return c.json({ experiments: results.results });
+});
+
+/**
+ * POST /v1/system/experiments
+ */
+systemRoutes.post("/experiments", async (c) => {
+  let body: { name: string; challenger_version_key: string; sample_rate?: number; notes?: string };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const sampleRate = body.sample_rate ?? 0.1;
+  if (!body.name || !body.challenger_version_key || sampleRate <= 0 || sampleRate >= 1) {
+    return c.json({ error: "name, challenger_version_key, and sample_rate (0-1) are required" }, 400);
+  }
+
+  const result = await c.env.DB.prepare(
+    `INSERT INTO model_experiments (name, challenger_version_key, sample_rate, notes)
+     VALUES (?, ?, ?, ?)`
+  )
+    .bind(body.name, body.challenger_version_key, sampleRate, body.notes || null)
+    .run();
+
+  return c.json({ status: "created", id: result.meta.last_row_id });
+});
+
+/**
+ * POST /v1/system/experiments/:id/status
+ */
+systemRoutes.post("/experiments/:id/status", async (c) => {
+  let body: { status: "draft" | "running" | "paused" | "completed" };
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Invalid JSON body" }, 400);
+  }
+
+  if (!["draft", "running", "paused", "completed"].includes(body.status)) {
+    return c.json({ error: "Invalid status" }, 400);
+  }
+
+  const id = c.req.param("id");
+  await c.env.DB.prepare(
+    `UPDATE model_experiments
+     SET status = ?,
+         started_at = CASE WHEN ? = 'running' AND started_at IS NULL THEN datetime('now') ELSE started_at END,
+         ended_at = CASE WHEN ? = 'completed' THEN datetime('now') ELSE ended_at END
+     WHERE id = ?`
+  )
+    .bind(body.status, body.status, body.status, id)
+    .run();
+
+  return c.json({ status: "updated" });
 });
