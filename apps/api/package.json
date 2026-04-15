@@ -12,6 +12,7 @@
     "db:migrate:prod": "wrangler d1 migrations apply gamecards-db --remote --env production"
   },
   "dependencies": {
+    "@hono/swagger-ui": "^0.6.1",
     "agents": "^0.11.0",
     "ai": "^6.0.161",
     "hono": "^4.7.0",

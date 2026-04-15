@@ -13,6 +13,7 @@ import { agentRoutes } from "./routes/agents";
 import { systemRoutes } from "./routes/system";
 import { authRoutes } from "./routes/auth";
 import { ingestRoutes } from "./routes/ingest";
+import { docsRoutes } from "./routes/docs";
 import { handleScheduled } from "./services/scheduler";
 import { handleIngestionQueue, handleSentimentQueue } from "./services/queue-consumer";
 import { apiKeyAuth, rateLimiter } from "./middleware/auth";
@@ -128,6 +129,9 @@ api.route("/agents", agentRoutes);
 api.route("/system", systemRoutes);
 api.route("/auth", authRoutes);
 api.route("/ingest", ingestRoutes);
+
+// Docs — mounted at /docs (outside /v1, no auth required)
+app.route("/docs", docsRoutes);
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
