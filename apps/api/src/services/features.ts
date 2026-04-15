@@ -32,7 +32,9 @@ export async function computeFeatures(env: Env): Promise<number> {
 
     try {
       const features = await computeCardFeatures(env, cardId, gradingCompany, grade);
+      const serializedFeatures = JSON.stringify(features);
 
+      // Keep the hot serving snapshot in feature_store.
       await env.DB.prepare(
         `INSERT INTO feature_store (card_id, grade, grading_company, features)
          VALUES (?, ?, ?, ?)
@@ -40,7 +42,18 @@ export async function computeFeatures(env: Env): Promise<number> {
            features = excluded.features,
            computed_at = datetime('now')`
       )
-        .bind(cardId, grade, gradingCompany, JSON.stringify(features))
+        .bind(cardId, grade, gradingCompany, serializedFeatures)
+        .run();
+
+      // Append one snapshot per day for point-in-time training/export.
+      await env.DB.prepare(
+        `INSERT INTO feature_store_history (card_id, grade, grading_company, snapshot_date, features, computed_at)
+         VALUES (?, ?, ?, date('now'), ?, datetime('now'))
+         ON CONFLICT(card_id, grade, grading_company, snapshot_date) DO UPDATE SET
+           features = excluded.features,
+           computed_at = excluded.computed_at`
+      )
+        .bind(cardId, grade, gradingCompany, serializedFeatures)
         .run();
 
       count++;
@@ -80,7 +93,7 @@ interface CardFeatures {
   social_mention_count_7d: number;
   social_mention_trend: number;
 
-  // GameStop internal data moat
+  // GameStop internal data
   internal_trade_in_count: number;
   internal_avg_trade_in_price: number;
   internal_inventory_units: number;

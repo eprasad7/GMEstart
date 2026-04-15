@@ -13,7 +13,7 @@ GameStop's collectibles business (graded trading cards — Pokemon, sports, TCG)
 
 **The core insight:** Collectibles pricing is a *sparse, irregular, fat-tailed* prediction problem — not a standard time series. Most cards sell infrequently (1-10x per month), prices can 10x overnight on social virality, and the same card at different grades can differ 50x in value. The system must handle this heterogeneity with volume-aware routing, not a one-size-fits-all model.
 
-**GameStop's unique advantage:** Physical store foot traffic + trade-in pricing data that no online competitor (PriceCharting, Alt, Card Ladder) has access to. This is the moat.
+**GameStop's differentiation:** Physical store foot traffic + trade-in pricing data that online-only platforms (PriceCharting, Alt, Card Ladder) don't have access to.
 
 ---
 
@@ -174,7 +174,7 @@ Based on research across collectibles pricing systems, academic papers, and prod
 
 **Seasonality Features:** `is_holiday_season`, `is_tax_refund_season`, `is_summer_lull`, `is_nfl_season`, `days_since_set_release`, cyclical month encoding (`month_sin`, `month_cos`).
 
-**GameStop-Exclusive Features (the moat) — DEFERRED:** `gamestop_trade_in_volume_7d`, `gamestop_store_price`, `gamestop_inventory_count`, `gamestop_days_in_inventory`, `gamestop_regional_demand`. No competitor has this data — requires internal DB integration.
+**GameStop-Exclusive Features — DEFERRED:** `gamestop_trade_in_volume_7d`, `gamestop_store_price`, `gamestop_inventory_count`, `gamestop_days_in_inventory`, `gamestop_regional_demand`. Requires internal DB integration.
 
 ---
 
@@ -736,7 +736,7 @@ Four Durable Object agents run autonomously alongside the cron pipeline. Each us
 | **Autonomous agents** | No | No | No | 4 agents (monitor, intelligence, competitors, recommendations) |
 | **Buy/sell decisions** | No | No | Unknown | NRV-based with margin targets + human approval workflow |
 
-**Honest assessment:** v1 does not yet have GameStop's "unfair advantage" (internal store data). The moat exists but is not yet plumbed. What ships is a best-in-class ML pricing engine with uncertainty quantification and autonomous monitoring — competitive with or ahead of Alt/Card Ladder on technical sophistication, behind on data breadth until internal data is connected.
+**Honest assessment:** v1 does not yet have GameStop's internal store data. What ships is an ML pricing engine with uncertainty quantification and autonomous monitoring. Competitive with Alt/Card Ladder on technical approach, but behind on data breadth until internal data is connected.
 
 ---
 

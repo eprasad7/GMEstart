@@ -166,9 +166,8 @@ export function Architecture() {
       <section>
         <SectionHeader icon={<Target className="h-6 w-6" />} title="Trade-In Decision Engine" />
         <p className="text-sm text-text-secondary mt-2 max-w-3xl">
-          The killer feature no competitor can replicate. When a customer walks into a GameStop store
-          with a card, the system tells the associate <strong>whether to buy it, at what price, and
-          what profit to expect</strong> — in real time, at the counter.
+          When a customer walks into a GameStop store with a card, the system tells the associate
+          whether to buy it, at what price, and what profit to expect — in real time, at the counter.
         </p>
 
         <div className="mt-8 max-w-5xl mx-auto">
@@ -233,7 +232,7 @@ export function Architecture() {
 
             <div className="border-t border-border px-6 py-3 bg-bg-secondary">
               <p className="text-xs text-text-muted">
-                <strong>Why no competitor can do this:</strong> Requires ML fair value + real-time inventory position + demand velocity + competitive pricing + social sentiment — all evaluated in &lt;100ms at the point of sale. PriceCharting tells you what a card is worth. GMEstart tells you whether to buy it.
+                This combines ML fair value, real-time inventory position, demand velocity, competitive pricing, and social sentiment — evaluated in &lt;100ms at the point of sale. It moves beyond "what is this card worth" to "should we buy it, and at what price."
               </p>
             </div>
           </div>
