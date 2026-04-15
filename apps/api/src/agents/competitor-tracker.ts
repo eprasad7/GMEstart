@@ -1,5 +1,6 @@
 import { Agent, callable } from "agents";
 import type { Env } from "../types";
+import { handleAgentRpc } from "./rpc-handler";
 
 interface PriceGap {
   cardId: string;
@@ -34,6 +35,10 @@ export class CompetitorTrackerAgent extends Agent<Env, TrackerState> {
 
   async onStart() {
     await this.scheduleEvery(21600, "scanCompetitorPrices");
+  }
+
+  async onRequest(request: Request): Promise<Response> {
+    return handleAgentRpc(this as unknown as Record<string, unknown>, request);
   }
 
   @callable({ description: "Run a competitor price scan and identify gaps" })

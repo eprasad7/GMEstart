@@ -1,5 +1,6 @@
 import { Agent, callable } from "agents";
 import type { Env } from "../types";
+import { handleAgentRpc } from "./rpc-handler";
 
 interface MarketReport {
   id: string;
@@ -38,6 +39,10 @@ export class MarketIntelligenceAgent extends Agent<Env, IntelligenceState> {
 
   async onStart() {
     await this.schedule("0 7 * * *", "generateDailyReport");
+  }
+
+  async onRequest(request: Request): Promise<Response> {
+    return handleAgentRpc(this as unknown as Record<string, unknown>, request);
   }
 
   @callable({ description: "Generate a daily AI-powered market intelligence report" })

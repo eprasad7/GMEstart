@@ -1,5 +1,6 @@
 import { Agent, callable, type Connection } from "agents";
 import type { Env } from "../types";
+import { handleAgentRpc } from "./rpc-handler";
 
 interface Recommendation {
   id: string;
@@ -73,6 +74,10 @@ export class PricingRecommendationAgent extends Agent<Env, RecommendationState> 
   async onStart() {
     await this.schedule("0 8 * * *", "generateRecommendations");
     await this.scheduleEvery(21600, "expireStaleRecommendations");
+  }
+
+  async onRequest(request: Request): Promise<Response> {
+    return handleAgentRpc(this as unknown as Record<string, unknown>, request);
   }
 
   @callable({ description: "Generate pricing recommendations from latest model predictions" })
