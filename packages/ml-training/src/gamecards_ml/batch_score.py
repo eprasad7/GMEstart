@@ -168,8 +168,17 @@ def write_predictions(predictions: list[dict], output_path: str) -> Path:
     return path
 
 
-def upload_predictions_to_r2(file_path: Path, config: TrainingConfig):
-    """Upload batch_predictions.json to R2."""
+def upload_predictions_to_r2(file_path: Path, config: TrainingConfig, model_dir: str):
+    """
+    Upload batch_predictions.json to R2 with versioning.
+
+    Writes:
+    - models/batch_predictions.json (latest — Worker reads this)
+    - models/versions/{timestamp}_predictions.json (versioned backup)
+    - models/predictions_meta.json (freshness + version metadata)
+    """
+    from datetime import datetime, timezone
+
     s3 = boto3.client(
         "s3",
         endpoint_url=config.r2_endpoint,
@@ -177,8 +186,36 @@ def upload_predictions_to_r2(file_path: Path, config: TrainingConfig):
         aws_secret_access_key=config.r2_secret_key,
         region_name="auto",
     )
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    # Upload versioned copy
+    versioned_key = f"models/versions/{timestamp}_predictions.json"
+    s3.upload_file(str(file_path), config.r2_bucket, versioned_key)
+    logger.info(f"Uploaded versioned: r2://{config.r2_bucket}/{versioned_key}")
+
+    # Upload as latest (the key the Worker reads)
     s3.upload_file(str(file_path), config.r2_bucket, "models/batch_predictions.json")
-    logger.info(f"Uploaded predictions to r2://{config.r2_bucket}/models/batch_predictions.json")
+    logger.info(f"Uploaded latest: r2://{config.r2_bucket}/models/batch_predictions.json")
+
+    # Read model metadata for version info
+    meta_path = Path(model_dir) / "model_meta.json"
+    model_meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+
+    # Write freshness metadata
+    predictions = json.loads(file_path.read_text())
+    freshness_meta = {
+        "version": timestamp,
+        "model_version": model_meta.get("version", "unknown"),
+        "conformal_correction": model_meta.get("conformal_correction", 0),
+        "cards_scored": len(predictions),
+        "scored_at": datetime.now(timezone.utc).isoformat(),
+        "versioned_key": versioned_key,
+    }
+    meta_tmp = file_path.parent / "predictions_meta.json"
+    meta_tmp.write_text(json.dumps(freshness_meta, indent=2))
+    s3.upload_file(str(meta_tmp), config.r2_bucket, "models/predictions_meta.json")
+    logger.info(f"Uploaded metadata: {freshness_meta['cards_scored']} cards, version {timestamp}")
 
 
 @click.command()
@@ -228,7 +265,7 @@ def cli(
     if upload:
         if not config.r2_endpoint:
             raise click.ClickException("R2_ENDPOINT required for upload")
-        upload_predictions_to_r2(out_path, config)
+        upload_predictions_to_r2(out_path, config, model_dir)
 
 
 if __name__ == "__main__":

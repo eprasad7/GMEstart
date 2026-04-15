@@ -11,6 +11,7 @@ import { alertRoutes } from "./routes/alerts";
 import { marketRoutes } from "./routes/market";
 import { cardRoutes } from "./routes/cards";
 import { agentRoutes } from "./routes/agents";
+import { systemRoutes } from "./routes/system";
 import { handleScheduled } from "./services/scheduler";
 import { handleIngestionQueue, handleSentimentQueue } from "./services/queue-consumer";
 import { apiKeyAuth, rateLimiter } from "./middleware/auth";
@@ -51,6 +52,7 @@ api.route("/evaluate", evaluateRoutes);
 api.route("/alerts", alertRoutes);
 api.route("/market", marketRoutes);
 api.route("/agents", agentRoutes);
+api.route("/system", systemRoutes);
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext) {
