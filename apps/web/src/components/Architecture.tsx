@@ -10,6 +10,7 @@ import {
   ArrowDown,
   Layers,
   Brain,
+  Target,
   AlertTriangle,
   CheckCircle2,
   BarChart3,
@@ -105,8 +106,8 @@ export function Architecture() {
               <NrvStep
                 number="1"
                 label="Fair Value"
-                value="$81.24"
-                desc="Median predicted sale price (p50)"
+                value="$191.20"
+                desc="LightGBM quantile regression (p50 median)"
                 color="text-text-primary"
               />
               <div className="pl-6 border-l-2 border-border">
@@ -115,23 +116,30 @@ export function Architecture() {
               <NrvStep
                 number="2"
                 label="Net Realizable Value"
-                value="$63.56"
+                value="$153.87"
                 desc="What GameStop actually nets after a sale"
                 color="text-info"
               />
               <div className="pl-6 border-l-2 border-border">
-                <p className="text-xs text-text-muted italic">×0.80 for 20% required margin</p>
+                <p className="text-xs text-text-muted italic">then adjusted by inventory, demand, competition, channel</p>
               </div>
               <NrvStep
                 number="3"
-                label="Max Buy Price"
-                value="$50.85"
-                desc="Highest price that achieves target margin"
+                label="Optimized List Price"
+                value="$223.33"
+                desc="+3% demand, +8% underpriced vs market, +5% in-store"
+                color="text-accent"
+              />
+              <NrvStep
+                number="4"
+                label="Max Trade-In Offer"
+                value="$178.66"
+                desc="Highest price we'd pay and still hit margin target"
                 color="text-buy"
               />
               <div className="rounded-lg border-2 border-buy/30 bg-buy/5 p-3 mt-2">
-                <p className="text-sm font-semibold text-buy">Offered $30? → STRONG BUY</p>
-                <p className="text-xs text-text-secondary mt-0.5">52.8% net margin after all costs</p>
+                <p className="text-sm font-semibold text-buy">Customer offers $120? → BUY</p>
+                <p className="text-xs text-text-secondary mt-0.5">$103 expected profit in ~15 days. Risk: medium.</p>
               </div>
             </div>
           </div>
@@ -149,6 +157,84 @@ export function Architecture() {
               <FeatureBar label="GameStop Internal" pct={9} color="bg-sell" example="Trade-in volume, inventory days, store views" />
               <FeatureBar label="Social Sentiment" pct={8} color="bg-accent" example="Reddit mentions, viral detection, trend direction" />
               <FeatureBar label="Seasonality" pct={5} color="bg-hold" example="Holiday season, tax refund period, sport season" />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ─── Trade-In Decision Engine ─── */}
+      <section>
+        <SectionHeader icon={<Target className="h-6 w-6" />} title="Trade-In Decision Engine" />
+        <p className="text-sm text-text-secondary mt-2 max-w-3xl">
+          The killer feature no competitor can replicate. When a customer walks into a GameStop store
+          with a card, the system tells the associate <strong>whether to buy it, at what price, and
+          what profit to expect</strong> — in real time, at the counter.
+        </p>
+
+        <div className="mt-8 max-w-5xl mx-auto">
+          {/* Scenario walkthrough */}
+          <div className="rounded-xl border border-border bg-bg-card shadow-sm overflow-hidden">
+            <div className="bg-bg-nav px-6 py-4">
+              <p className="text-base font-bold text-text-inverse">Scenario: Customer offers $120 for a Charizard #4</p>
+              <p className="text-xs text-text-inverse/60 mt-0.5">Store associate scans the card — system responds in &lt;100ms</p>
+            </div>
+
+            <div className="p-6 grid gap-6 lg:grid-cols-3">
+              {/* Column 1: Decision */}
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">Decision</p>
+                <div className="rounded-lg bg-buy/10 border border-buy/20 p-4 text-center">
+                  <p className="text-2xl font-extrabold text-buy">BUY</p>
+                  <p className="text-xs text-text-secondary mt-1">Below max offer — profitable trade-in</p>
+                </div>
+                <div className="mt-3 space-y-2 text-sm">
+                  <div className="flex justify-between"><span className="text-text-muted">Fair Value</span><span className="font-semibold text-text-primary">$191.20</span></div>
+                  <div className="flex justify-between"><span className="text-text-muted">List Price</span><span className="font-semibold text-text-primary">$223.33</span></div>
+                  <div className="flex justify-between"><span className="text-text-muted">Max Offer</span><span className="font-semibold text-buy">$178.66</span></div>
+                  <div className="flex justify-between"><span className="text-text-muted">Customer Asks</span><span className="font-semibold text-text-primary">$120.00</span></div>
+                </div>
+              </div>
+
+              {/* Column 2: Adjustments */}
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">Price Adjustments</p>
+                <div className="space-y-2">
+                  <AdjustmentRow label="Accelerating demand" impact="+3%" color="text-buy" />
+                  <AdjustmentRow label="Underpriced vs market by 43%" impact="+8%" color="text-buy" />
+                  <AdjustmentRow label="In-store premium (impulse)" impact="+5%" color="text-buy" />
+                </div>
+                <div className="mt-4 rounded-lg bg-bg-secondary p-3">
+                  <p className="text-xs text-text-muted">Other possible adjustments:</p>
+                  <div className="mt-1 space-y-1 text-xs text-text-secondary">
+                    <p>Overstocked (8 units, 45d aging) → <span className="text-sell">-5%</span></p>
+                    <p>Low sell-through (20%) → <span className="text-sell">-8%</span></p>
+                    <p>Viral social spike → <span className="text-hold font-semibold">HOLD</span></p>
+                    <p>Pop growing 20%+ → <span className="text-sell">-3%</span></p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Column 3: Risk */}
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">Risk Assessment</p>
+                <div className="space-y-3">
+                  <div className="flex justify-between text-sm"><span className="text-text-muted">Expected Profit</span><span className="font-bold text-buy">$103.33</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-text-muted">Days to Sell</span><span className="font-semibold text-text-primary">~15 days</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-text-muted">Risk Level</span><span className="rounded bg-hold/10 px-2 py-0.5 text-xs font-bold text-hold">MEDIUM</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-text-muted">Worst Case Exit</span><span className="font-semibold text-text-primary">$133.08</span></div>
+                  <div className="flex justify-between text-sm"><span className="text-text-muted">Confidence</span><span className="font-semibold text-text-primary">LOW</span></div>
+                </div>
+                <div className="mt-4 rounded-lg bg-bg-secondary p-3 text-xs text-text-muted">
+                  <p className="font-medium text-text-secondary mb-1">Worst case:</p>
+                  <p>Liquidate on eBay at 80% of fair value minus 13% fees = $133. Still profitable at $120 buy price.</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="border-t border-border px-6 py-3 bg-bg-secondary">
+              <p className="text-xs text-text-muted">
+                <strong>Why no competitor can do this:</strong> Requires ML fair value + real-time inventory position + demand velocity + competitive pricing + social sentiment — all evaluated in &lt;100ms at the point of sale. PriceCharting tells you what a card is worth. GMEstart tells you whether to buy it.
+              </p>
             </div>
           </div>
         </div>
@@ -357,6 +443,15 @@ function TechCard({ icon, name, desc, badge }: { icon: React.ReactNode; name: st
           <p className="text-xs text-text-muted mt-0.5 leading-relaxed">{desc}</p>
         </div>
       </div>
+    </div>
+  );
+}
+
+function AdjustmentRow({ label, impact, color }: { label: string; impact: string; color: string }) {
+  return (
+    <div className="flex items-center justify-between rounded-lg bg-bg-secondary px-3 py-2">
+      <span className="text-sm text-text-secondary">{label}</span>
+      <span className={`text-sm font-bold ${color}`}>{impact}</span>
     </div>
   );
 }
