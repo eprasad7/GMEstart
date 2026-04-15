@@ -107,6 +107,42 @@ systemRoutes.get("/health", async (c) => {
 });
 
 /**
+ * GET /v1/system/activity — recent pipeline activity for agent dashboard
+ */
+systemRoutes.get("/activity", async (c) => {
+  const limit = Math.min(parseInt(c.req.query("limit") || "25"), 100);
+
+  const results = await c.env.DB.prepare(
+    `SELECT source, status, records_processed, error_message, started_at, completed_at
+     FROM ingestion_log
+     ORDER BY started_at DESC
+     LIMIT ?`
+  )
+    .bind(limit)
+    .all();
+
+  const runs = results.results.map((r) => {
+    const startedAt = r.started_at as string | null;
+    const completedAt = r.completed_at as string | null;
+    const durationMs = startedAt && completedAt
+      ? new Date(completedAt).getTime() - new Date(startedAt).getTime()
+      : null;
+
+    return {
+      source: r.source,
+      status: r.status,
+      records: r.records_processed,
+      error: r.error_message || null,
+      startedAt,
+      completedAt,
+      durationMs,
+    };
+  });
+
+  return c.json({ runs });
+});
+
+/**
  * GET /v1/system/model
  */
 systemRoutes.get("/model", async (c) => {
@@ -315,6 +351,34 @@ systemRoutes.post("/mock-internal", async (c) => {
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
   }
+});
+
+/**
+ * POST /v1/system/run-pipeline
+ *
+ * Manually trigger the daily pipeline: anomaly → aggregates → features → predictions.
+ * For demo use — normally runs via cron at 4-6am UTC.
+ */
+systemRoutes.post("/run-pipeline", async (c) => {
+  const { runAnomalyDetection } = await import("../services/anomaly");
+  const { computeAggregates } = await import("../services/aggregates");
+  const { computeFeatures } = await import("../services/features");
+  const { batchPredict } = await import("../services/inference");
+
+  const results: Record<string, number | string> = {};
+
+  try {
+    results.anomalies = await runAnomalyDetection(c.env);
+    await computeAggregates(c.env);
+    results.features = await computeFeatures(c.env);
+    results.predictions = await batchPredict(c.env);
+    results.status = "complete";
+  } catch (err) {
+    results.status = "failed";
+    results.error = err instanceof Error ? err.message : String(err);
+  }
+
+  return c.json(results);
 });
 
 /**
