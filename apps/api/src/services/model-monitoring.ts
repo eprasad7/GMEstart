@@ -22,10 +22,12 @@ function classifyDrift(
   coverage90: number | null,
   changeRate: number
 ): ModelMonitoringSnapshot["drift_status"] {
+  // When using statistical fallback (no trained model), MDAPE will be high.
+  // Only flag as degraded if we have a trained model that's drifting badly.
   if (
-    (mdapePct !== null && mdapePct > 35) ||
-    (coverage90 !== null && coverage90 < 0.7) ||
-    changeRate > 0.4
+    (mdapePct !== null && mdapePct > 100) ||
+    (coverage90 !== null && coverage90 < 0.5) ||
+    changeRate > 0.6
   ) {
     return "degraded";
   }

@@ -370,4 +370,32 @@ export const api = {
 
   getActivity: (limit = 25) =>
     fetchApi<{ runs: ActivityRun[] }>(`/system/activity?limit=${limit}`),
+
+  runPipeline: () =>
+    fetchApi<Record<string, unknown>>("/system/run-pipeline", { method: "POST" }),
+
+  // Agents
+  getMonitorStatus: () =>
+    fetchApi<{ lastCheck: string | null; activeAlerts: number; totalChecks: number; totalAnomalies: number; recentAlerts: Array<{ cardId: string; cardName: string; type: string; magnitude: number; detectedAt: string }> }>("/agents/monitor/status"),
+
+  triggerMonitorCheck: () =>
+    fetchApi<{ alertsFound: number; total: number }>("/agents/monitor/check", { method: "POST" }),
+
+  getIntelligenceLatest: () =>
+    fetchApi<{ id: string; date: string; summary: string; marketSentiment: string; highlights: Array<{ title: string; detail: string; impact: string }> } | null>("/agents/intelligence/latest").catch(() => null),
+
+  generateIntelligenceReport: () =>
+    fetchApi<Record<string, unknown>>("/agents/intelligence/generate", { method: "POST" }),
+
+  getCompetitorStatus: () =>
+    fetchApi<{ lastScan: string | null; totalScans: number; currentGaps: number; overpriced: number; underpriced: number }>("/agents/competitors/status"),
+
+  triggerCompetitorScan: () =>
+    fetchApi<{ gaps: number; scanned: number }>("/agents/competitors/scan", { method: "POST" }),
+
+  getRecommendationStatus: () =>
+    fetchApi<{ pendingCount: number; pendingByAction: { buy: number; sell: number; reprice: number }; lastGenerated: string | null; stats: { totalGenerated: number; totalApproved: number; totalRejected: number; totalExpired: number } }>("/agents/recommendations/status"),
+
+  generateRecommendations: () =>
+    fetchApi<{ generated: number }>("/agents/recommendations/generate", { method: "POST" }),
 };
