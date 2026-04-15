@@ -2,7 +2,7 @@ import type { Env } from "../types";
 import { ingestSoldComps } from "./ingestion/soldcomps";
 import { ingestPriceCharting } from "./ingestion/pricecharting";
 import { scrapeRedditSentiment } from "./ingestion/reddit-scraper";
-import { ingestPopulationReports } from "./ingestion/population";
+import { scrapePopulationReports } from "./ingestion/population-scraper";
 import { computeFeatures } from "./features";
 import { runAnomalyDetection } from "./anomaly";
 import { computeAggregates } from "./aggregates";
@@ -64,7 +64,7 @@ export async function handleScheduled(event: ScheduledEvent, env: Env): Promise<
         break;
 
       case "0 3 * * *":
-        count = await ingestPopulationReports(env);
+        count = await scrapePopulationReports(env);
         break;
 
       case "0 4 * * *":

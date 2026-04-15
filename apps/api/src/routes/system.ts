@@ -394,6 +394,10 @@ systemRoutes.post("/run-pipeline", async (c) => {
   };
 
   try {
+    const { ingestPriceCharting } = await import("../services/ingestion/pricecharting");
+    const { scrapePopulationReports } = await import("../services/ingestion/population-scraper");
+    await logStep("pricecharting", () => ingestPriceCharting(c.env));
+    await logStep("population", () => scrapePopulationReports(c.env));
     await logStep("sentiment_rollup", () => rollUpSentiment(c.env));
     await logStep("anomaly", () => runAnomalyDetection(c.env));
     await logStep("features", async () => { await computeAggregates(c.env); return computeFeatures(c.env); });
